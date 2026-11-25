@@ -456,7 +456,7 @@ function render(){
  $('#status').hidden=view!=='trip'||!cur;
  $('#status').innerHTML=err?'<b>Feil</b> · prøv igjen':at?`<b>${esc(hm(at))}</b>`:'…';
 }
-function renderSetup(){$('#app').innerHTML=setupView();render()}
+function renderSetup(){$('#app').innerHTML=setupView();render();shareLink()}
 function go(v,open){view=v;if(v==='setup'){renderSetup()}else{if(!cfg.trips.find(t=>t.id===cur))cur=cfg.trips[0]?.id||null;ls.set('cur',cur);data=null;render();load();autoPick(!!open)}}
 
 // ---------- søk ----------
@@ -703,19 +703,48 @@ async function mapStops(){
 // ---------- deling ----------
 const b64e=s=>btoa(unescape(encodeURIComponent(s))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const b64d=s=>decodeURIComponent(escape(atob(s.replace(/-/g,'+').replace(/_/g,'/'))));
-function shareLink(){return location.href.split('#')[0]+'#oppsett='+b64e(JSON.stringify({p:cfg.places,t:cfg.trips}))}
+// Delingslenka, kort format: «z» + base64url av kompakt JSON komprimert med deflate-raw (CompressionStream).
+// Kompakt JSON: [stader, reiser]; stad [id,namn,[[stopp-ID,namn,gangtid,(modus utan buss)]…]]; reise [id,frå,til,(linjer)];
+// samband [id,[kai-ID,namn,lat,lon],[…],dir]. Stopp-ID «NSR:StopPlace:123» blir talet 123. `label` er ikkje med.
+// Gamle lenker (base64url av {"p":…,"t":…}) byrjar alltid på «ey», så dei kan ikkje forvekslast, og blir lesne som før.
+// Utan CompressionStream blir lenka som før (ukomprimert), men utan `label`.
+const SID='NSR:StopPlace:',NOZIP='nozip';
+const sidE=i=>/^NSR:StopPlace:\d+$/.test(i)?+i.slice(SID.length):i,sidD=x=>typeof x==='number'?SID+x:String(x);
+const u8b64=u=>{let s='';for(const b of u)s+=String.fromCharCode(b);return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')};
+const b64u8=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
+const pipe=async(u,ts)=>new Uint8Array(await new Response(new Blob([u]).stream().pipeThrough(ts)).arrayBuffer());
+async function makeLink(){
+ const base=location.href.split('#')[0]+'#oppsett=';
+ const P=cfg.places.map(p=>[p.id,p.name,p.stops.map(s=>[sidE(s.id),s.name,+s.walk||0,...(s.mode&&s.mode!=='bus'?[s.mode]:[])])]);
+ const E=e=>[sidE(e.id),e.full||e.name,...(e.lat==null?[]:[+(+e.lat).toFixed(5),+(+e.lon).toFixed(5)])];
+ const T=cfg.trips.map(t=>t.ferry?[t.id,E(t.ferry.a),E(t.ferry.b),t.dir]:[t.id,t.from,t.to,...(t.lines?[t.lines]:[])]);
+ try{return base+'z'+u8b64(await pipe(new TextEncoder().encode(JSON.stringify([P,T])),new CompressionStream('deflate-raw')))}
+ catch(e){return base+b64e(JSON.stringify({p:cfg.places.map(p=>({id:p.id,name:p.name,stops:p.stops.map(({label,...s})=>s)})),t:cfg.trips}))}
+}
+// Lenka blir laga på førehand når oppsettet blir vist, så «Del» og «Kopier» skjer medan trykket framleis gjeld (Safari).
+let link={key:'',url:''};
+async function shareLink(){const k=JSON.stringify(cfg);if(link.key!==k){const url=await makeLink();link={key:k,url}}return link.url}
 function dialog(html){$('#dlg').innerHTML=`<section class="card" style="box-shadow:0 14px 40px rgba(0,0,0,.35)">${html}</section>`}
 // Les og vask eit oppsett frå delingslenka (berre `#oppsett=…`-delen).
-function readShare(code){
-  const o=JSON.parse(b64d(code));
+async function readShare(code){
+  let o;
+  if(code[0]==='z'){ // kort format
+   try{new DecompressionStream('deflate-raw')}catch(e){throw NOZIP}
+   const [P,T]=JSON.parse(new TextDecoder().decode(await pipe(b64u8(code.slice(1)),new DecompressionStream('deflate-raw'))));
+   const F=([i,n,la,lo])=>({id:sidD(i),name:n,full:n,lat:la??null,lon:lo??null});
+   o={p:P.map(([id,name,st])=>({id,name,stops:(st||[]).map(([i,n,w,m])=>({id:sidD(i),name:n,walk:w,mode:m}))})),
+    t:T.map(([id,x,y,z])=>Array.isArray(x)?{id,ferry:{a:F(x),b:F(y)},dir:z}:{id,from:x,to:y,lines:z})};
+  }else o=JSON.parse(b64d(code));
   if(!Array.isArray(o.p)||!Array.isArray(o.t))throw 0;
   return{places:o.p.map(p=>({id:String(p.id),name:String(p.name),stops:(p.stops||[]).map(s=>({id:String(s.id),name:String(s.name),label:String(s.label||''),mode:String(s.mode||'bus'),walk:+s.walk||0}))})),
    trips:o.t.map(t=>t.ferry?{id:String(t.id),ferry:{a:fEnd(t.ferry.a),b:fEnd(t.ferry.b)},dir:t.dir==='ba'?'ba':'ab'}:{id:String(t.id),from:String(t.from),to:String(t.to),lines:String(t.lines||'')})};
 }
 // Finn koden i ei lima lenke (eller berre koden).
 const shareCode=txt=>(String(txt).match(/#oppsett=([A-Za-z0-9_-]+)/)||String(txt).trim().match(/^([A-Za-z0-9_-]{16,})$/)||[])[1];
-function offerImport(code){
- try{window._imp=readShare(code)}catch(e){dialog(`<h2>Lenka var øydelagd</h2><p class="note">Sjekk at du fekk med heile lenka.</p><div class="btns">${closeBtn}</div>`);return}
+async function offerImport(code){
+ try{window._imp=await readShare(code)}catch(e){
+  dialog(e===NOZIP?`<h2>Nettlesaren kan ikkje opne lenka</h2><p class="note">Lenka er komprimert, og denne nettlesaren kan ikkje pakke ho ut. Oppdater nettlesaren (på iPhone: iOS 16.4 eller nyare) og prøv igjen.</p><div class="btns">${closeBtn}</div>`
+   :`<h2>Lenka var øydelagd</h2><p class="note">Sjekk at du fekk med heile lenka.</p><div class="btns">${closeBtn}</div>`);return}
  window._link=location.href.split('#')[0]+'#oppsett='+code;
  // Safari på iPhone (ikkje appen på Heim-skjermen): appen der har eiga lagring og får ikkje med seg importen.
  const ios=navigator.standalone===false?`<p class="note"><b>Brukar du Neste frå Heim-skjermen?</b> Der har appen eiga lagring. Kopier lenka, opne Neste frå Heim-skjermen og vel Oppsett → «Opne delingslenke».</p>`:'';
@@ -739,7 +768,7 @@ function qrSVG(text){
 async function qrDialog(){
  dialog('<h2>QR-kode</h2><p class="note">Lagar QR-kode …</p>');
  let svg;
- try{await loadQR();svg=qrSVG(shareLink())}
+ try{await loadQR();svg=qrSVG(await shareLink())}
  catch(e){dialog(`<h2>QR-kode</h2><p class="note">${/overflow/i.test(e.message||e)?'Oppsettet er for stort til éin QR-kode. Del lenka i staden.':esc(e.message||e)}</p><div class="btns">${closeBtn}</div>`);return}
  dialog(`<h2>Skann for å få oppsettet</h2><div class="qr">${svg}</div>
   <p class="note">Opne kameraet på den andre telefonen og skann koden. Lenka inneheld stadane, stoppa og reisene, men ikkje kvar stadene er.</p>
@@ -800,8 +829,9 @@ document.addEventListener('click',async e=>{
   case'ntog':{const s=near[+b.dataset.i];if(!s||!p)break;const i=p.stops.findIndex(x=>x.id===s.id);
    if(i>=0)p.stops.splice(i,1);else addStop(pid,s);save();const on=i<0;b.setAttribute('aria-pressed',on);b.querySelector('.mk').textContent=on?'✓':'+'}break;
   case'ndone':$('#dlg').innerHTML='';renderSetup();break;
-  case'share':if(navigator.share){try{await navigator.share({title:'Neste',text:'Oppsettet mitt i Neste. Opne lenka, eller lim ho inn under Oppsett → «Opne delingslenke».',url:shareLink()})}catch(x){}break}
-   try{await navigator.clipboard.writeText(shareLink());b.textContent='Kopiert ✓'}catch(x){dialog(`<h2>Kopier lenka</h2><input readonly value="${esc(shareLink())}" onfocus="this.select()"><div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div>`)}break;
+  case'share':{const url=await shareLink();
+   if(navigator.share){try{await navigator.share({title:'Neste',text:'Oppsettet mitt i Neste. Opne lenka, eller lim ho inn under Oppsett → «Opne delingslenke».',url})}catch(x){}break}
+   try{await navigator.clipboard.writeText(url);b.textContent='Kopiert ✓'}catch(x){dialog(`<h2>Kopier lenka</h2><input readonly value="${esc(url)}" onfocus="this.select()"><div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div>`)}}break;
   case'reset':dialog('<h2>Nullstille alt?</h2><p class="note">Alle stader, reiser og punkta for stadene blir sletta frå denne eininga.</p><div class="btns"><button class="cta" type="button" data-act="resetYes">Nullstill</button><button class="sec" type="button" data-act="impNo">Avbryt</button></div>');break;
   case'resetYes':cfg={places:[{id:uid(),name:'Heim',stops:[]}],trips:[]};pts={};savePts();save();$('#dlg').innerHTML='';renderSetup();break;
   case'qr':qrDialog();break;

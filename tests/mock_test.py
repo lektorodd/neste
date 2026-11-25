@@ -7,7 +7,8 @@ Skjermbilete hamnar i tests/out/. Testen går gjennom oppsettet
 minste bytetid, linjefilter på første tur, mellomlagring),
 følgjekartet (Leaflet frå cdnjs; blir hoppa over utan nett), kvar ein
 stad er (stopp i nærleiken med gangtid), ferjesamband (snu kai, og kai vald etter påfunnen posisjon) og
-reise vald etter påfunnen posisjon (sist brukte reise frå staden, ikkje overstyre eit nytt val). Sjekkar òg
+reise vald etter påfunnen posisjon (sist brukte reise frå staden, ikkje overstyre eit nytt val), kort delingslenke
+(komprimert, gamle lenker, utan CompressionStream/DecompressionStream). Sjekkar òg
 manifest og ikon.
 """
 import json, datetime as dt, pathlib
@@ -465,6 +466,52 @@ with sync_playwright() as p:
     pg.click("[data-act=done]"); pg.wait_for_timeout(300)
     ctx.set_geolocation({"latitude": 60.08, "longitude": 5.01})
 
+    # Kort delingslenke: komprimert med deflate-raw («z…»), utan label, og ho gir same oppsett tilbake
+    def norm(c):
+        e = lambda x: (x["id"], x["name"], x["full"], round(x["lat"], 5), round(x["lon"], 5))
+        return ([(p["id"], p["name"], [(s["id"], s["name"], s["walk"], s["mode"]) for s in p["stops"]]) for p in c["places"]],
+                [(t["id"], e(t["ferry"]["a"]), e(t["ferry"]["b"]), t["dir"]) if "ferry" in t else (t["id"], t["from"], t["to"], t["lines"]) for t in c["trips"]])
+    ctx.grant_permissions(["geolocation", "clipboard-read", "clipboard-write"])
+    before = pg.evaluate("JSON.parse(localStorage.getItem('neste.cfg'))")
+    assert any(s["label"] for p in before["places"] for s in p["stops"]) and any("ferry" in t for t in before["trips"]) and any(t.get("lines") for t in before["trips"])
+    pg.click("#setup"); pg.wait_for_timeout(300); pg.click("[data-act=share]"); pg.wait_for_timeout(500)
+    code = pg.evaluate("navigator.clipboard.readText()").split("#oppsett=")[1]
+    assert code.startswith("z"), code[:20]
+    import zlib, base64
+    raw = zlib.decompress(base64.urlsafe_b64decode(code[1:] + "=" * (-len(code[1:]) % 4)), -15).decode()
+    assert "Testby" not in raw and "NSR:StopPlace" not in raw, raw  # ingen label, stopp-ID som tal
+    pg.click("[data-act=done]"); pg.wait_for_timeout(200)
+    pg.evaluate("localStorage.setItem('neste.cfg', JSON.stringify({places: [{id: 'x', name: 'Anna', stops: []}], trips: []}))")
+    pg.goto((ROOT / "index.html").as_uri() + "#oppsett=" + code); pg.wait_for_timeout(600)
+    assert "3 stader og 6 reiser" in pg.locator("#dlg").inner_text(), pg.locator("#dlg").inner_text()
+    pg.click("[data-act=impYes]"); pg.wait_for_timeout(500)
+    after = pg.evaluate("JSON.parse(localStorage.getItem('neste.cfg'))")
+    assert norm(after) == norm(before), (norm(after), norm(before))
+    # Lima kort lenke, og ei øydelagd ei
+    pg.click("#setup"); pg.wait_for_timeout(300)
+    pg.click("[data-act=paste]"); pg.fill("#impTxt", "https://example.org/neste/#oppsett=" + code); pg.click("[data-act=impPaste]"); pg.wait_for_timeout(300)
+    assert "Importere oppsett?" in pg.locator("#dlg").inner_text()
+    pg.click("[data-act=impNo]"); pg.click("[data-act=paste]"); pg.fill("#impTxt", "#oppsett=" + code[:40]); pg.click("[data-act=impPaste]"); pg.wait_for_timeout(300)
+    assert "Lenka var øydelagd" in pg.locator("#dlg").inner_text(), pg.locator("#dlg").inner_text()
+    pg.click("[data-act=impNo]"); pg.click("[data-act=done]"); pg.wait_for_timeout(200)
+    # Utan CompressionStream: ukomprimert lenke som før, men utan label. Utan DecompressionStream: tydeleg melding.
+    old = ctx.new_page(); old.on("pageerror", lambda e: errs.append(str(e))); old.route("**/journey-planner/**", jp)
+    old.add_init_script("delete window.CompressionStream")
+    old.goto((ROOT / "index.html").as_uri()); old.wait_for_timeout(400)
+    old.click("#setup"); old.wait_for_timeout(300); old.click("[data-act=share]"); old.wait_for_timeout(400)
+    plain = old.evaluate("navigator.clipboard.readText()").split("#oppsett=")[1]
+    js = json.loads(base64.urlsafe_b64decode(plain + "=" * (-len(plain) % 4)))
+    assert plain.startswith("eyJ") and "label" not in json.dumps(js) and len(js["p"]) == 3, plain[:40]
+    old.close()
+    nd = ctx.new_page(); nd.on("pageerror", lambda e: errs.append(str(e))); nd.route("**/journey-planner/**", jp)
+    nd.add_init_script("delete window.DecompressionStream")
+    nd.goto((ROOT / "index.html").as_uri() + "#oppsett=" + code); nd.wait_for_timeout(500)
+    assert "kan ikkje pakke ho ut" in nd.locator("#dlg").inner_text(), nd.locator("#dlg").inner_text()
+    nd.screenshot(path=str(OUT / "lenke_utan_dekomp.png"))
+    nd.goto((ROOT / "index.html").as_uri() + "#oppsett=" + plain); nd.wait_for_timeout(500)
+    assert "3 stader og 6 reiser" in nd.locator("#dlg").inner_text(), "ukomprimert lenke skal fungere utan DecompressionStream"
+    nd.close(); pg.bring_to_front()
+
     # Delingslenke med eit samband blir importert og vaska
     import base64
     share = {"p": [], "t": [{"id": "s1", "dir": "ba", "x": "<b>", "ferry": {
@@ -506,9 +553,12 @@ with sync_playwright() as p:
         pg.screenshot(path=str(OUT / "qr.png"))
         pg.click("#dlg [data-act=impNo]")
         # For stort oppsett til éin kode: melding i staden for feil
-        pg.evaluate("""() => { const c = JSON.parse(localStorage.getItem('neste.cfg'));
-            c.places[0].stops = Array.from({length: 60}, (_, i) => ({id: 'NSR:StopPlace:' + (5000 + i), name: 'Stopp ' + i, label: 'Testby', mode: 'bus', walk: 3}));
-            localStorage.setItem('neste.cfg', JSON.stringify(c)) }""")
+        # Tilfeldige namn, så heller ikkje den komprimerte lenka får plass
+        import random; rnd = random.Random(1)
+        big = [{"id": f"NSR:StopPlace:{rnd.randint(1000, 99999)}", "name": "".join(rnd.choice("abcdefghijklmnopqrstuvwxyzæøå ") for _ in range(24)),
+                "label": "Testby", "mode": "bus", "walk": rnd.randint(1, 20)} for _ in range(120)]
+        pg.evaluate("""big => { const c = JSON.parse(localStorage.getItem('neste.cfg'));
+            c.places[0].stops = big; localStorage.setItem('neste.cfg', JSON.stringify(c)) }""", big)
         pg.reload(); pg.wait_for_timeout(500)  # utan reiser opnar appen i oppsettet
         pg.click("[data-act=qr]"); pg.wait_for_timeout(2500)
         assert "for stort til éin QR-kode" in pg.locator("#dlg").inner_text(), pg.locator("#dlg").inner_text()
