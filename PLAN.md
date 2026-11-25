@@ -31,17 +31,18 @@ Observert, ikkje retta:
 
 ## 3. Forbetringar
 
+- [x] **Ferjesamband** (25.11.2026): éi reise av typen `{ferry:{a,b},dir}` i staden for to stader og to reiser. Kaiane på andre sida blir funne frå avgangane (`filters` med `transportMode: water`, `next`). Avgangane blir henta med same filter, så 60 avgangar dekkjer om lag eit døgn i staden for 2,5 timar på Halhjem. «Snu» byter side; «Vel kai etter kvar eg er» (lokal innstilling, ikkje i delingslenka) vel næraste kai ved opning og etter 2 min i bakgrunnen.
 - [x] **Følg bussen på kartet** (25.11.2026): Trykk på ei avgangsrad. Appen spør `realtime/v2/vehicles/graphql` med `vehicles(serviceJourneyId: …)` kvart 10. sekund medan kartet er ope, og stoppar når det blir lukka eller appen ligg i bakgrunnen. Testa mot ekte data: Skyss sender buss og ferje, men ikkje Bybanen, og ein tur får først posisjon når han har starta. Frå endestasjonar (Bergen busstasjon, ferjekaiar) er det difor sjeldan posisjon før avgang. Ein mogleg vidareføring er å følgje køyretøyet på turen før (krev `vehicleId`/blokk, som avgangane ikkje har).
 - [ ] **Linjefilter på serveren** (viktigast, sjå funn i steg 1): Når brukaren har sett linjer, slå opp line-ID-ar (`lines(publicCodes: […])` gir t.d. `SKY:Line:50E`) og bruk `estimatedCalls(filters: [{select: [{lines: […]}]}])`. `whiteListed` finst ikkje på `StopPlace.estimatedCalls` i v3. Utan filter kan `numberOfDeparturesPerLineAndDestinationDisplay` spreie avgangane over lengre tid.
 - [ ] **Overgangar**: I dag er berre direkte turar med. Vurder `trip(from, to)` for reiser med bytte.
 - [ ] **Avvik**: Vis `situations` (SIRI SX) på linja eller stoppet.
 - [ ] **Sortering av reiser**: Dra og slepp, eller ein «Gjer til standard»-knapp.
 - [ ] **QR-kode** for delingslenka, så familien kan skanne frå ein annan telefon.
-- [ ] **Gangtid**: La brukaren justere gangtid i kartet, og set eit fornuftig tak for forslaga frå heimepunktet.
+- [x] **Gangtid / kvar er staden** (25.11.2026): kvar stad kan ha eit punkt (søk i geocoderen med `layers=address`, som òg finn skular og andre POI-ar, eller vel på kartet). «Stopp i nærleiken» brukar `nearest` (1,5 km, 20 stopp) og gangtid frå `trip(... modes:{directMode:foot, transportModes:[]})`, 20 stopp på om lag 0,5 s. Punkta ligg i `localStorage` under `neste.pts`, ikkje i `cfg`, så dei er aldri i delingslenka. Det gamle heimepunktet blir flytta til staden «Heim».
 
 ## Prinsipp som skal halde
 
 - Inga adresse, inga heimeposisjon og ingen personlege stopp i repoet. Alt brukaroppsett ligg i `localStorage`.
-- Heimepunktet blir aldri med i delingslenka. Lenka brukar `#`-delen, så ingenting går via server.
+- Punkta for stadene (kvar heim og jobb er) blir aldri med i delingslenka. Lenka brukar `#`-delen, så ingenting går via server.
 - Éi fil (`index.html`) så lenge det går. Ingen byggesteg.
 - Ikkje Skyss-oransje. Eigen palett: lime signal (`--sig`), blå buss, grøn bane, sjøblå ferje.
