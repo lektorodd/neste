@@ -24,10 +24,10 @@ Observert, ikkje retta:
 
 ## 2. Publiser
 
-- [ ] Slå på GitHub Pages (main, rot).
+- [ ] Slå på GitHub Pages (main, rot): Settings → Pages → «Deploy from a branch», `main`, `/ (root)`. Adresse: https://lektorodd.github.io/neste/. `.nojekyll` er lagt til.
 - [ ] Legg til `manifest.webmanifest` og ikon (192/512) så «Legg til på Heim-skjerm» blir fin på Android òg.
 - [ ] Vurder service worker berre for app-skalet (ikkje for avgangsdata).
-- [ ] Vel lisens (MIT?) og legg til `LICENSE`.
+- [x] Lisens: MIT, `LICENSE` lagt til (25.11.2026).
 
 ## 3. Forbetringar
 

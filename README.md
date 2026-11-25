@@ -16,6 +16,12 @@ Appen sender stopp-ID-ar til Entur for å hente avgangar (og ID-en til turen du 
 
 ## Køyre
 
-Éi fil: `index.html`. Legg ho på GitHub Pages, Cloudflare Pages eller ein annan statisk vert, og vel «Legg til på Heim-skjerm» på telefonen.
+Appen ligg på **https://lektorodd.github.io/neste/**. Opne adressa på telefonen og vel «Legg til på Heim-skjerm».
+
+Éi fil: `index.html`. Ho kan òg liggje på Cloudflare Pages eller ein annan statisk vert. `.nojekyll` gjer at GitHub Pages serverer filene som dei er.
 
 API-kall identifiserer seg med `ET-Client-Name: lektorodd-neste`. Lagar du din eigen variant, bytt til `<organisasjon>-<app>`.
+
+## Lisens
+
+Koden er under [MIT-lisensen](LICENSE). Avgangsdata frå Entur er under [NLOD](https://data.norge.no/nlod/no/2.0), kartdata © OpenStreetMap-bidragsytarar ([ODbL](https://www.openstreetmap.org/copyright)).
