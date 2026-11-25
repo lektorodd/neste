@@ -3,7 +3,7 @@
 Køyr:  pip install playwright && playwright install chromium
        python tests/mock_test.py
 Skjermbilete hamnar i tests/out/. Testen går gjennom oppsettet
-(søk, legg til stopp, ny stad, reise + retur), reisevisinga, linjefilteret, avvik, rekkjefølgja,
+(søk, legg til stopp, ny stad, reise + retur), reisevisinga, linjefilteret, avvik, rekkjefølgja, QR-koden,
 følgjekartet (Leaflet frå cdnjs; blir hoppa over utan nett), kvar ein
 stad er (stopp i nærleiken med gangtid) og ferjesamband (snu kai, og kai vald etter påfunnen posisjon). Sjekkar òg
 manifest og ikon.
@@ -344,6 +344,29 @@ with sync_playwright() as p:
     pg.click("[data-act=paste]"); pg.fill("#impTxt", "ingen lenke her"); pg.click("[data-act=impPaste]")
     assert "Fann inga delingslenke" in pg.locator("#dlg").inner_text()
     pg.click("[data-act=impNo]"); pg.click("[data-act=done]"); pg.wait_for_timeout(300)
+
+    # QR-kode for delingslenka: kodaren blir lasta frå cdnjs først når han trengst (blir hoppa over utan nett)
+    assert pg.evaluate("!!document.querySelector('script[src*=qrcode]')") is False, "QR-kodaren skal ikkje lastast før han trengst"
+    pg.click("#setup"); pg.wait_for_timeout(300)
+    pg.click("[data-act=qr]"); pg.wait_for_timeout(2500)
+    if "lasta ikkje" in pg.locator("#dlg").inner_text():
+        print("Hoppar over QR-delen: QR-kodaren lasta ikkje (utan nett?)")
+    else:
+        assert pg.evaluate("document.querySelector('script[src*=qrcode]').integrity.startsWith('sha384-')")
+        svg = pg.locator("#dlg .qr svg")
+        assert svg.count() == 1 and pg.locator("#dlg .qr path").get_attribute("d").count("h1v1") > 200
+        assert "Kopier lenka" in pg.locator("#dlg").inner_text(), "rettleiinga for iPhone manglar"
+        pg.screenshot(path=str(OUT / "qr.png"))
+        pg.click("#dlg [data-act=impNo]")
+        # For stort oppsett til éin kode: melding i staden for feil
+        pg.evaluate("""() => { const c = JSON.parse(localStorage.getItem('neste.cfg'));
+            c.places[0].stops = Array.from({length: 60}, (_, i) => ({id: 'NSR:StopPlace:' + (5000 + i), name: 'Stopp ' + i, label: 'Testby', mode: 'bus', walk: 3}));
+            localStorage.setItem('neste.cfg', JSON.stringify(c)) }""")
+        pg.reload(); pg.wait_for_timeout(500)  # utan reiser opnar appen i oppsettet
+        pg.click("[data-act=qr]"); pg.wait_for_timeout(2500)
+        assert "for stort til éin QR-kode" in pg.locator("#dlg").inner_text(), pg.locator("#dlg").inner_text()
+        pg.click("#dlg [data-act=impNo]")
+    pg.click("[data-act=done]"); pg.wait_for_timeout(300)
 
     # Safari på iPhone: rettleiing om appen på Heim-skjermen, og ei anna open fane får med seg importen
     ios = ctx.new_page(); ios.on("pageerror", lambda e: errs.append(str(e)))

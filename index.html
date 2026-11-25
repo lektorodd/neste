@@ -128,6 +128,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid 
 .ord{display:grid;grid-template-columns:24px minmax(0,1fr) auto auto;gap:4px;align-items:center;border-top:1px solid var(--line);font-weight:600}.ord:first-of-type{border-top:0}
 .ord .num{color:var(--mute);font-variant-numeric:tabular-nums;font-size:14px}.ord span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .x:disabled{opacity:.25;cursor:default}
+.qr{background:#fff;border-radius:14px;padding:6px;margin:10px auto;width:min(100%,340px)}.qr svg{display:block;width:100%;height:auto}
 .avb .wi,.sit .wi{margin:0}.sitx{margin:8px 0;white-space:pre-line}.dlg a{color:var(--bus)}
 footer{font-size:12px;color:var(--mute);text-align:center;margin-top:18px}
 @media(prefers-reduced-motion:reduce){.rt{animation:none}}
@@ -152,6 +153,8 @@ footer{font-size:12px;color:var(--mute);text-align:center;margin-top:18px}
 const CLIENT='lektorodd-neste',JP='https://api.entur.io/journey-planner/v3/graphql',GEO='https://api.entur.io/geocoder/v1/autocomplete';
 const VEH='https://api.entur.io/realtime/v2/vehicles/graphql'; // posisjonar; berre spurt når kartet følgjer ein tur
 const LEAFLET='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
+// QR-kodar (kazuhikoarase/qrcode-generator, MIT, 20 kB). Berre lasta når nokon opnar QR-koden.
+const QRLIB={src:'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js',sri:'sha384-mZT2gIty7ZDdOGkxfP6joZcYdMW1Jvj9dRlfpTmaJAKKXTqzygtB22k7FLe+KZC1'};
 const MODEC={bus:'var(--bus)',coach:'var(--bus)',tram:'var(--tram)',metro:'var(--tram)',water:'var(--water)',rail:'var(--rail)'};
 const MODE_HEX={bus:'#3a6df0',coach:'#3a6df0',tram:'#19b36b',metro:'#19b36b',water:'#0aa5c2',rail:'#8a5cf6'};
 const $=s=>document.querySelector(s);
@@ -361,7 +364,7 @@ function setupView(){
   <p class="note">Den første reisa opnar når appen ikkje har noko anna val, til dømes etter import.</p></section>`:''}
  <section class="card"><h2>Del med familien</h2>
   <p class="note">Lenka inneheld stadane, stoppa og reisene dine, men ikkje kvar stadene er. Opnar nokon lenka, kan dei importere oppsettet.</p>
-  <div class="btns"><button class="cta" type="button" data-act="share">${navigator.share?'Del lenka':'Kopier delingslenke'}</button><button class="sec" type="button" data-act="paste">Opne delingslenke</button><button class="sec" type="button" data-act="reset">Nullstill</button></div></section>
+  <div class="btns"><button class="cta" type="button" data-act="share">${navigator.share?'Del lenka':'Kopier delingslenke'}</button><button class="sec" type="button" data-act="qr">Vis QR-kode</button><button class="sec" type="button" data-act="paste">Opne delingslenke</button><button class="sec" type="button" data-act="reset">Nullstill</button></div></section>
  <div class="btns" style="margin:0 0 20px"><button class="cta" type="button" data-act="done">Ferdig</button></div>`;
 }
 
@@ -621,6 +624,30 @@ function offerImport(code){
  dialog(`<h2>Importere oppsett?</h2><p class="note">${window._imp.places.length} stader og ${window._imp.trips.length} reiser. Dette erstattar oppsettet ditt her.</p>${ios}
   <div class="btns"><button class="cta" type="button" data-act="impYes">Importer</button>${ios?'<button class="sec" type="button" data-act="copyLink">Kopier lenka</button>':''}<button class="sec" type="button" data-act="impNo">Avbryt</button></div>`);
 }
+// QR-kode for delingslenka: teikna som SVG, mørk på kvitt uansett tema (det les kamera best).
+function loadQR(){
+ return new Promise((ok,no)=>{
+  if(window.qrcode)return ok();
+  const s=document.createElement('script');s.src=QRLIB.src;s.integrity=QRLIB.sri;s.crossOrigin='anonymous';
+  s.onload=ok;s.onerror=()=>no(new Error('QR-kodaren lasta ikkje'));document.head.appendChild(s);
+ });
+}
+function qrSVG(text){
+ const q=qrcode(0,'L');q.addData(text,'Byte');q.make(); // L: lengst lenke per kode; skjermen er rein
+ const n=q.getModuleCount(),m=4;let d='';
+ for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(q.isDark(r,c))d+=`M${c+m} ${r+m}h1v1h-1z`;
+ return`<svg viewBox="0 0 ${n+2*m} ${n+2*m}" role="img" aria-label="QR-kode for delingslenka" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
+async function qrDialog(){
+ dialog('<h2>QR-kode</h2><p class="note">Lagar QR-kode …</p>');
+ let svg;
+ try{await loadQR();svg=qrSVG(shareLink())}
+ catch(e){dialog(`<h2>QR-kode</h2><p class="note">${/overflow/i.test(e.message||e)?'Oppsettet er for stort til éin QR-kode. Del lenka i staden.':esc(e.message||e)}</p><div class="btns">${closeBtn}</div>`);return}
+ dialog(`<h2>Skann for å få oppsettet</h2><div class="qr">${svg}</div>
+  <p class="note">Opne kameraet på den andre telefonen og skann koden. Lenka inneheld stadane, stoppa og reisene, men ikkje kvar stadene er.</p>
+  <p class="note"><b>iPhone:</b> kameraet opnar lenka i Safari. Brukar dei Neste frå Heim-skjermen, vel dei «Kopier lenka» der, opnar Neste frå Heim-skjermen og vel Oppsett → «Opne delingslenke».</p>
+  <div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div>`);
+}
 function checkImport(){
  const m=location.hash.match(/^#oppsett=(.+)$/);if(!m)return;
  offerImport(m[1]);
@@ -679,6 +706,7 @@ document.addEventListener('click',async e=>{
    try{await navigator.clipboard.writeText(shareLink());b.textContent='Kopiert ✓'}catch(x){dialog(`<h2>Kopier lenka</h2><input readonly value="${esc(shareLink())}" onfocus="this.select()"><div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div>`)}break;
   case'reset':dialog('<h2>Nullstille alt?</h2><p class="note">Alle stader, reiser og punkta for stadene blir sletta frå denne eininga.</p><div class="btns"><button class="cta" type="button" data-act="resetYes">Nullstill</button><button class="sec" type="button" data-act="impNo">Avbryt</button></div>');break;
   case'resetYes':cfg={places:[{id:uid(),name:'Heim',stops:[]}],trips:[]};pts={};savePts();save();$('#dlg').innerHTML='';renderSetup();break;
+  case'qr':qrDialog();break;
   case'paste':pasteDialog();$('#impTxt').focus();break;
   case'impPaste':tryPaste($('#impTxt').value);break;
   case'impClip':try{tryPaste(await navigator.clipboard.readText())}catch(x){$('#impTxt').focus()}break;
