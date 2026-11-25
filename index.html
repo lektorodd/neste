@@ -128,6 +128,8 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid 
 .ord{display:grid;grid-template-columns:24px minmax(0,1fr) auto auto;gap:4px;align-items:center;border-top:1px solid var(--line);font-weight:600}.ord:first-of-type{border-top:0}
 .ord .num{color:var(--mute);font-variant-numeric:tabular-nums;font-size:14px}.ord span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .x:disabled{opacity:.25;cursor:default}
+.scan{background:#000;border-radius:14px;overflow:hidden;aspect-ratio:1;margin:10px auto;width:min(100%,340px)}
+.scan video{width:100%!important;height:100%!important;object-fit:cover;display:block}
 .qr{background:#fff;border-radius:14px;padding:6px;margin:10px auto;width:min(100%,340px)}.qr svg{display:block;width:100%;height:auto}
 .pills{display:grid;gap:3px}
 .avb .wi,.sit .wi{margin:0}.sitx{margin:8px 0;white-space:pre-line}.dlg a{color:var(--bus)}
@@ -156,6 +158,9 @@ const VEH='https://api.entur.io/realtime/v2/vehicles/graphql'; // posisjonar; be
 const LEAFLET='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
 // QR-kodar (kazuhikoarase/qrcode-generator, MIT, 20 kB). Berre lasta når nokon opnar QR-koden.
 const QRLIB={src:'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js',sri:'sha384-mZT2gIty7ZDdOGkxfP6joZcYdMW1Jvj9dRlfpTmaJAKKXTqzygtB22k7FLe+KZC1'};
+// QR-lesar (mebjas/html5-qrcode 2.3.8, Apache-2.0, 375 kB). Berre lasta når skannaren blir opna i ein nettlesar utan
+// BarcodeDetector (t.d. Safari på iPhone). Chrome på Android les QR-kodar sjølv, og då blir ingenting lasta ned.
+const SCANLIB={src:'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js',sri:'sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+'};
 const MODEC={bus:'var(--bus)',coach:'var(--bus)',tram:'var(--tram)',metro:'var(--tram)',water:'var(--water)',rail:'var(--rail)'};
 const MODE_HEX={bus:'#3a6df0',coach:'#3a6df0',tram:'#19b36b',metro:'#19b36b',water:'#0aa5c2',rail:'#8a5cf6'};
 const $=s=>document.querySelector(s);
@@ -441,7 +446,7 @@ function setupView(){
   <p class="note">Den første reisa opnar når appen ikkje har noko anna val, til dømes etter import.</p></section>`:''}
  <section class="card"><h2>Del med familien</h2>
   <p class="note">Lenka inneheld stadane, stoppa og reisene dine, men ikkje kvar stadene er. Opnar nokon lenka, kan dei importere oppsettet.</p>
-  <div class="btns"><button class="cta" type="button" data-act="share">${navigator.share?'Del lenka':'Kopier delingslenke'}</button><button class="sec" type="button" data-act="qr">Vis QR-kode</button><button class="sec" type="button" data-act="paste">Opne delingslenke</button><button class="sec" type="button" data-act="reset">Nullstill</button></div></section>
+  <div class="btns"><button class="cta" type="button" data-act="share">${navigator.share?'Del lenka':'Kopier delingslenke'}</button><button class="sec" type="button" data-act="qr">Vis QR-kode</button><button class="sec" type="button" data-act="paste">Opne delingslenke</button><button class="sec" type="button" data-act="scan">Skann QR-kode</button><button class="sec" type="button" data-act="reset">Nullstill</button></div></section>
  <div class="btns" style="margin:0 0 20px"><button class="cta" type="button" data-act="done">Ferdig</button></div>`;
 }
 
@@ -724,7 +729,7 @@ async function makeLink(){
 // Lenka blir laga på førehand når oppsettet blir vist, så «Del» og «Kopier» skjer medan trykket framleis gjeld (Safari).
 let link={key:'',url:''};
 async function shareLink(){const k=JSON.stringify(cfg);if(link.key!==k){const url=await makeLink();link={key:k,url}}return link.url}
-function dialog(html){$('#dlg').innerHTML=`<section class="card" style="box-shadow:0 14px 40px rgba(0,0,0,.35)">${html}</section>`}
+function dialog(html){stopScan();$('#dlg').innerHTML=`<section class="card" style="box-shadow:0 14px 40px rgba(0,0,0,.35)">${html}</section>`}
 // Les og vask eit oppsett frå delingslenka (berre `#oppsett=…`-delen).
 async function readShare(code){
   let o;
@@ -747,18 +752,20 @@ async function offerImport(code){
    :`<h2>Lenka var øydelagd</h2><p class="note">Sjekk at du fekk med heile lenka.</p><div class="btns">${closeBtn}</div>`);return}
  window._link=location.href.split('#')[0]+'#oppsett='+code;
  // Safari på iPhone (ikkje appen på Heim-skjermen): appen der har eiga lagring og får ikkje med seg importen.
- const ios=navigator.standalone===false?`<p class="note"><b>Brukar du Neste frå Heim-skjermen?</b> Der har appen eiga lagring. Kopier lenka, opne Neste frå Heim-skjermen og vel Oppsett → «Opne delingslenke».</p>`:'';
+ const ios=navigator.standalone===false?`<p class="note"><b>Brukar du Neste frå Heim-skjermen?</b> Der har appen eiga lagring. Kopier lenka, opne Neste frå Heim-skjermen og vel Oppsett → «Opne delingslenke». Har du QR-koden, kan du i staden skanne han med Oppsett → «Skann QR-kode» i appen.</p>`:'';
  dialog(`<h2>Importere oppsett?</h2><p class="note">${window._imp.places.length} stader og ${window._imp.trips.length} reiser. Dette erstattar oppsettet ditt her.</p>${ios}
   <div class="btns"><button class="cta" type="button" data-act="impYes">Importer</button>${ios?'<button class="sec" type="button" data-act="copyLink">Kopier lenka</button>':''}<button class="sec" type="button" data-act="impNo">Avbryt</button></div>`);
 }
 // QR-kode for delingslenka: teikna som SVG, mørk på kvitt uansett tema (det les kamera best).
-function loadQR(){
+// Lastar eit skript frå cdnjs med eksakt versjon og SRI, berre når det trengst.
+function loadLib(lib,ready,msg){
  return new Promise((ok,no)=>{
-  if(window.qrcode)return ok();
-  const s=document.createElement('script');s.src=QRLIB.src;s.integrity=QRLIB.sri;s.crossOrigin='anonymous';
-  s.onload=ok;s.onerror=()=>no(new Error('QR-kodaren lasta ikkje'));document.head.appendChild(s);
+  if(ready())return ok();
+  const s=document.createElement('script');s.src=lib.src;s.integrity=lib.sri;s.crossOrigin='anonymous';
+  s.onload=()=>ready()?ok():no(new Error(msg));s.onerror=()=>no(new Error(msg));document.head.appendChild(s);
  });
 }
+const loadQR=()=>loadLib(QRLIB,()=>window.qrcode,'QR-kodaren lasta ikkje');
 function qrSVG(text){
  const q=qrcode(0,'L');q.addData(text,'Byte');q.make(); // L: lengst lenke per kode; skjermen er rein
  const n=q.getModuleCount(),m=4;let d='';
@@ -772,7 +779,7 @@ async function qrDialog(){
  catch(e){dialog(`<h2>QR-kode</h2><p class="note">${/overflow/i.test(e.message||e)?'Oppsettet er for stort til éin QR-kode. Del lenka i staden.':esc(e.message||e)}</p><div class="btns">${closeBtn}</div>`);return}
  dialog(`<h2>Skann for å få oppsettet</h2><div class="qr">${svg}</div>
   <p class="note">Opne kameraet på den andre telefonen og skann koden. Lenka inneheld stadane, stoppa og reisene, men ikkje kvar stadene er.</p>
-  <p class="note"><b>iPhone:</b> kameraet opnar lenka i Safari. Brukar dei Neste frå Heim-skjermen, vel dei «Kopier lenka» der, opnar Neste frå Heim-skjermen og vel Oppsett → «Opne delingslenke».</p>
+  <p class="note"><b>iPhone med Neste på Heim-skjermen:</b> skann frå inne i appen, med Oppsett → «Skann QR-kode». Kamera-appen opnar lenka i Safari, som har eiga lagring; der kan ein velje «Kopier lenka» og lime ho inn under Oppsett → «Opne delingslenke».</p>
   <div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div>`);
 }
 function checkImport(){
@@ -781,9 +788,71 @@ function checkImport(){
  history.replaceState(null,'',location.pathname+location.search);
 }
 function pasteDialog(){
- dialog(`<h2>Opne delingslenke</h2><p class="note">Lim inn lenka du har fått. Brukar du Neste frå Heim-skjermen på iPhone, er det slik du får oppsettet inn i appen.</p>
+ dialog(`<h2>Opne delingslenke</h2><p class="note">Lim inn lenka du har fått, eller skann QR-koden frå den andre telefonen. Brukar du Neste frå Heim-skjermen på iPhone, er det slik du får oppsettet inn i appen.</p>
   <input id="impTxt" type="url" placeholder="Lim inn lenka her" autocomplete="off" aria-label="Delingslenke">
-  <div class="btns"><button class="cta" type="button" data-act="impPaste">Opne</button>${navigator.clipboard?.readText?'<button class="sec" type="button" data-act="impClip">Lim inn</button>':''}${closeBtn}</div>`);
+  <div class="btns"><button class="cta" type="button" data-act="impPaste">Opne</button>${navigator.clipboard?.readText?'<button class="sec" type="button" data-act="impClip">Lim inn</button>':''}<button class="sec" type="button" data-act="scan">Skann QR-kode</button>${closeBtn}</div>`);
+}
+
+// ---------- QR-skannar ----------
+// Kameraet (bakkameraet) blir berre brukt medan dialogen er open, og bileta blir lesne her på eininga.
+// Med BarcodeDetector: eigen getUserMedia og <video>. Elles: html5-qrcode, som opnar kameraet sjølv.
+// Berre kodar med ei Neste-delingslenke (#oppsett=) blir godtekne; dei går til same import som liming.
+let scan=null; // {stream, timer, lib} medan skannaren går
+function stopScan(){
+ const s=scan;scan=null;if(!s)return;
+ clearTimeout(s.timer);s.stream?.getTracks().forEach(t=>t.stop());
+ if(s.lib)s.lib.then(q=>q&&q.stop().then(()=>q.clear()).catch(()=>{})).catch(()=>{});
+}
+const scanNote=t=>{const n=$('#scanNote');if(n)n.textContent=t};
+function camErr(e){
+ const n=String(e?.name||'')+' '+String(e?.message||e||'');
+ return/NotAllowed|Permission|SecurityError/i.test(n)?'Neste fekk ikkje bruke kameraet. Gi lov til kameraet i innstillingane for nettlesaren (på iPhone: Innstillingar → Safari → Kamera), eller lim inn lenka i staden.'
+  :/NotFound|Overconstrained|DevicesNotFound|no camera|not found/i.test(n)?'Fann ikkje noko kamera på denne eininga. Lim inn lenka i staden.'
+  :/NotReadable|TrackStart|in use/i.test(n)?'Kameraet er i bruk av ein annan app. Lukk den og prøv igjen.'
+  :'Fekk ikkje starta kameraet: '+n.trim();
+}
+function scanHit(txt){
+ if(!scan)return;
+ const m=String(txt||'').match(/#oppsett=[A-Za-z0-9_-]+/);
+ if(!m){scanNote('Det er ikkje ein QR-kode frå Neste. Hald kameraet mot koden under Oppsett → «Vis QR-kode».');return}
+ stopScan();tryPaste(m[0]);
+}
+async function scanDialog(){
+ dialog(`<h2>Skann QR-kode</h2><div class="scan" id="scanBox"></div><p class="note" id="scanNote">Startar kameraet …</p>
+  <p class="note">Bileta blir berre lesne på denne eininga.</p><div class="btns"><button class="sec" type="button" data-act="paste">Lim inn i staden</button>${closeBtn}</div>`);
+ const me=scan={};
+ const fail=e=>{if(scan!==me)return;stopScan();$('#scanBox')?.remove();scanNote(camErr(e))};
+ if(!navigator.mediaDevices?.getUserMedia)return fail({name:'NotFoundError'});
+ let bd=false;try{bd='BarcodeDetector' in window&&(await BarcodeDetector.getSupportedFormats()).includes('qr_code')}catch(e){}
+ if(scan!==me)return;
+ const ready=()=>{if(scan===me)scanNote('Hald kameraet mot QR-koden for Neste.')};
+ if(bd){
+  try{
+   const det=new BarcodeDetector({formats:['qr_code']});
+   const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});
+   if(scan!==me){stream.getTracks().forEach(t=>t.stop());return}
+   me.stream=stream;
+   const v=document.createElement('video');v.muted=true;v.playsInline=true;v.setAttribute('playsinline','');v.srcObject=stream;
+   $('#scanBox').appendChild(v);await v.play();ready();
+   const tick=async()=>{if(scan!==me)return;
+    try{for(const c of await det.detect(v))if(scan===me)scanHit(c.rawValue)}catch(e){}
+    if(scan===me)me.timer=setTimeout(tick,200)};
+   tick();
+  }catch(e){fail(e)}
+  return;
+ }
+ // Utan BarcodeDetector: html5-qrcode frå cdnjs.
+ scanNote('Hentar QR-lesaren …');
+ me.lib=(async()=>{
+  await loadLib(SCANLIB,()=>window.Html5Qrcode,'QR-lesaren lasta ikkje');
+  if(scan!==me)return null;
+  const box=$('#scanBox');box.innerHTML='<div id="scanLib"></div>';
+  const q=new Html5Qrcode('scanLib',{formatsToSupport:[Html5QrcodeSupportedFormats.QR_CODE],useBarCodeDetectorIfSupported:false,verbose:false});
+  await q.start({facingMode:'environment'},{fps:8},t=>scanHit(t),()=>{});
+  if(scan!==me){q.stop().then(()=>q.clear()).catch(()=>{});return null}
+  ready();return q;
+ })();
+ me.lib.catch(e=>{if(/lasta ikkje/.test(e?.message)){if(scan===me){stopScan();$('#scanBox')?.remove();scanNote(e.message+'. Sjekk nettet, eller lim inn lenka.')}}else fail(e)});
 }
 function tryPaste(txt){const c=shareCode(txt);if(c)offerImport(c);else dialog(`<h2>Fann inga delingslenke</h2><p class="note">Lenka skal innehalde «#oppsett=».</p><div class="btns"><button class="cta" type="button" data-act="paste">Prøv igjen</button>${closeBtn}</div>`)}
 // Endra i ei anna fane eller i nettlesaren (Android deler lagring med appen): les inn på nytt.
@@ -840,7 +909,8 @@ document.addEventListener('click',async e=>{
   case'impClip':try{tryPaste(await navigator.clipboard.readText())}catch(x){$('#impTxt').focus()}break;
   case'copyLink':try{await navigator.clipboard.writeText(window._link);b.textContent='Kopiert ✓'}catch(x){dialog(`<h2>Kopier lenka</h2><input readonly value="${esc(window._link)}" onfocus="this.select()"><div class="btns">${closeBtn}</div>`)}break;
   case'impYes':cfg=window._imp;save();$('#dlg').innerHTML='';cur=null;go('trip');break;
-  case'impNo':$('#dlg').innerHTML='';break;
+  case'impNo':stopScan();$('#dlg').innerHTML='';break;
+  case'scan':scanDialog();break;
   case'mapClose':stopFollow();$('#map').classList.remove('on');if(view==='setup')renderSetup();break;
   case'mapStops':mapStops();break;
   case'mapLocate':try{navigator.geolocation.getCurrentPosition(x=>map.setView([x.coords.latitude,x.coords.longitude],16),()=>{$('#mapNote').textContent='Fekk ikkje posisjonen.'})}catch(x){}break;
@@ -867,7 +937,7 @@ $('#mapPlace').addEventListener('change',drawPt);
 $('#setup').addEventListener('click',()=>go(view==='trip'?'setup':'trip'));
 $('#status').addEventListener('click',load);
 window.addEventListener('storage',e=>{if(e.key==='neste.cfg')syncFromStorage()});
-document.addEventListener('visibilitychange',()=>{if(document.hidden){hiddenAt=Date.now();return}syncFromStorage();if(!at||Date.now()-at>20000)load();if(follow)track();if(Date.now()-hiddenAt>120000)autoPick(true)});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){hiddenAt=Date.now();if(scan){stopScan();$('#scanBox')?.remove();scanNote('Kameraet stoppa då appen gjekk i bakgrunnen. Trykk «Skann QR-kode» for å prøve igjen.')}return}syncFromStorage();if(!at||Date.now()-at>20000)load();if(follow)track();if(Date.now()-hiddenAt>120000)autoPick(true)});
 setInterval(()=>{if(!document.hidden)load()},30000);
 setInterval(()=>{if(!document.hidden&&view==='trip'&&data)render()},10000);
 window.addEventListener('hashchange',checkImport); // delingslenke opna i ei fane som alt viser appen

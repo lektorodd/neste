@@ -8,7 +8,8 @@ minste bytetid, linjefilter på første tur, mellomlagring),
 følgjekartet (Leaflet frå cdnjs; blir hoppa over utan nett), kvar ein
 stad er (stopp i nærleiken med gangtid), ferjesamband (snu kai, og kai vald etter påfunnen posisjon) og
 reise vald etter påfunnen posisjon (sist brukte reise frå staden, ikkje overstyre eit nytt val), kort delingslenke
-(komprimert, gamle lenker, utan CompressionStream/DecompressionStream). Sjekkar òg
+(komprimert, gamle lenker, utan CompressionStream/DecompressionStream) og QR-skannaren (falskt kamera med påfunnen
+QR-kode; BarcodeDetector påfunnen, html5-qrcode frå cdnjs blir hoppa over utan nett). Sjekkar òg
 manifest og ikon.
 """
 import json, datetime as dt, pathlib
@@ -194,9 +195,41 @@ def check_manifest():
 
 check_manifest()
 
+# Falskt kamera til QR-skannaren: ein påfunnen QR-kode (versjon 9, feilretting M) med ei påfunnen delingslenke
+# (2 stader, 1 reise). Modulane er rekna ut på førehand, så testdata treng ikkje nett.
+SCAN_LINK = "https://example.org/neste/#oppsett=zJc0xDoAgEATAr5irrwB8CnYXCowUBCERThJ_Zu_HPLHdnc0SERwaEGzypTT2GyCRVkojLKFxj2l67l4D4OycQ9EG_mq9PmoGtaFwPfPEoeZY_A5o3ODiWfy4kKVkLw"
+SCAN_QR = (
+    "1fc7e96bd6ec7f 1044387598a641 174d0a4ed7ea5d 1743eb38cda55d 174e2ffff06c5d "
+    "1050031117a441 1fd5555555557f a81d1299200 12d280ff01b7a0 1e179ac800029d "
+    "702fdebeabda 110209a7fbd906 134b16c93f1c70 1e02f6f37da257 15ceb597f9dc37 "
+    "4b614401af491 1cd6658efb6313 1e1a60c53b691b 17f0f1633f5273 1e35d748a3b243 "
+    "11fe1856297d9c f823a08031028 bea27bc259446 e3c6a848c484d 5fad27fb5f3fa "
+    "b187f3135011b 1d5b4435055353 91217b12fef13 1ffadc9f4b65f1 e9b629aa35b6f "
+    "14dc2b162a93db 88f84299a89f2 1ee166f06df40d 1905c0908003c0 194d4c8ecb8f16 "
+    "1d02f43cd750c4 19da80eeb3f9ac 1d219e7f839820 1d13ba3a722c7 e208df445f593 "
+    "104625d7972aea 13a1bfbca36b84 1bf3c900a279df c0b638dfdeeda 257d0ff6975f4 "
+    "14ab31020911 1fc2ae1556995e 105e62311ac114 174e2f7fd73ffa 175af47825b122 "
+    "174c16c5cdda50 104a64427aa292 1fd05afb1365e2 ").split()
+
+def fake_camera(path, scale=8, quiet=4):
+    """Skriv QR-koden som Y4M-video (gråtone) til --use-file-for-fake-video-capture."""
+    n = len(SCAN_QR); assert n == 53; size = (n + 2 * quiet) * scale
+    bits = [format(int(h, 16), f"0{n}b") for h in SCAN_QR]
+    y = bytearray()
+    for r in range(size):
+        mr = r // scale - quiet
+        for c in range(size):
+            mc = c // scale - quiet
+            y.append(16 if 0 <= mr < n and 0 <= mc < n and bits[mr][mc] == "1" else 235)
+    frame = b"FRAME\n" + bytes(y) + bytes([128]) * (size * size // 2)
+    path.write_bytes(f"YUV4MPEG2 W{size} H{size} F10:1 Ip A1:1 C420jpeg\n".encode() + frame * 3)
+
+CAM = OUT / "qr_kamera.y4m"; fake_camera(CAM)
+
 with sync_playwright() as p:
     import os
-    b = p.chromium.launch(executable_path=os.environ.get("CHROME") or None)
+    b = p.chromium.launch(executable_path=os.environ.get("CHROME") or None,
+                          args=["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", f"--use-file-for-fake-video-capture={CAM}"])
     ctx = b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, color_scheme="dark",
                         permissions=["geolocation"], geolocation={"latitude": 60.08, "longitude": 5.01})  # påfunne, nærast Motkai
     pg = ctx.new_page()
@@ -564,6 +597,62 @@ with sync_playwright() as p:
         assert "for stort til éin QR-kode" in pg.locator("#dlg").inner_text(), pg.locator("#dlg").inner_text()
         pg.click("#dlg [data-act=impNo]")
     pg.click("[data-act=done]"); pg.wait_for_timeout(300)
+
+    # QR-skannar i appen. Straumane blir registrerte, så vi kan sjå at kameraet blir stoppa.
+    ctx.grant_permissions(["geolocation", "clipboard-read", "clipboard-write", "camera"])
+    REC = "{const g = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices); window._streams = [];" \
+          " navigator.mediaDevices.getUserMedia = c => g(c).then(s => (window._streams.push(s), s))}"
+    live = lambda q: q.evaluate("window._streams.flatMap(s => s.getTracks()).filter(t => t.readyState === 'live').length")
+    def scanner(init):
+        q = ctx.new_page(); q.on("pageerror", lambda e: errs.append(str(e))); q.route("**/journey-planner/**", jp)
+        q.add_init_script(init); q.goto((ROOT / "index.html").as_uri()); q.wait_for_timeout(400)
+        if q.locator("[data-act=paste]").count() == 0: q.click("#setup"); q.wait_for_timeout(200)
+        q.click("[data-act=paste]"); q.click("#dlg [data-act=scan]")
+        return q
+    def wait_text(q, txt, ms=10000):
+        for _ in range(ms // 250):
+            if txt in q.locator("#dlg").inner_text(): return True
+            q.wait_for_timeout(250)
+        return False
+    # Med BarcodeDetector (påfunnen, som i Chrome på Android): ingen nedlasting. Først ein QR-kode som ikkje er frå Neste.
+    BD = "window.BarcodeDetector = class { static async getSupportedFormats() { return ['qr_code'] }" \
+         " async detect(v) { window._n = (window._n || 0) + 1; if (!(v.videoWidth > 0)) return [];" \
+         " return [{rawValue: window._n < 4 ? 'https://example.org/anna' : %s}] } };" % json.dumps(SCAN_LINK)
+    q = scanner(REC + BD)
+    assert wait_text(q, "ikkje ein QR-kode frå Neste", 4000), q.locator("#dlg").inner_text()
+    assert wait_text(q, "Importere oppsett?"), q.locator("#dlg").inner_text()
+    assert "2 stader og 1 reiser" in q.locator("#dlg").inner_text()
+    assert live(q) == 0 and q.evaluate("window._streams.length") == 1, "kameraet skal stoppast når koden er funnen"
+    assert q.evaluate("!document.querySelector('script[src*=html5-qrcode]')"), "med BarcodeDetector skal ingenting lastast ned"
+    q.click("[data-act=impYes]"); q.wait_for_timeout(400)
+    assert q.evaluate("JSON.parse(localStorage.getItem('neste.cfg')).places.map(p => p.name)") == ["Skannstad", "Testby"]
+    # Lukk skannaren: kameraet stoppar
+    q.evaluate("window._n = -1000")  # ingen kode no
+    q.click("#setup"); q.wait_for_timeout(200); q.click(".card [data-act=scan]"); q.wait_for_timeout(600)
+    assert live(q) == 1, "kameraet skulle gå"
+    q.screenshot(path=str(OUT / "skann.png"))
+    q.click("#dlg [data-act=impNo]"); q.wait_for_timeout(200)
+    assert live(q) == 0, "kameraet skal stoppast når dialogen blir lukka"
+    q.close()
+    # Nei til kamera, og inkje kamera
+    for name, txt in (("NotAllowedError", "fekk ikkje bruke kameraet"), ("NotFoundError", "Fann ikkje noko kamera")):
+        q = scanner(BD + "navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException('nei', '%s'))" % name)
+        assert wait_text(q, txt, 3000), q.locator("#dlg").inner_text()
+        assert q.locator("#scanBox").count() == 0
+        if name == "NotAllowedError": q.screenshot(path=str(OUT / "skann_nei.png"))
+        q.close()
+    # Utan BarcodeDetector: html5-qrcode frå cdnjs les den påfunne QR-koden frå det falske kameraet (blir hoppa over utan nett)
+    q = scanner(REC + "delete window.BarcodeDetector")
+    wait_text(q, "Importere oppsett?", 15000)
+    dl = q.locator("#dlg").inner_text()
+    if "lasta ikkje" in dl:
+        print("Hoppar over html5-qrcode: lasta ikkje (utan nett?)")
+    else:
+        assert "Importere oppsett?" in dl and "2 stader og 1 reiser" in dl, dl
+        assert q.evaluate("document.querySelector('script[src*=html5-qrcode]').integrity.startsWith('sha384-')")
+        q.wait_for_timeout(500)
+        assert live(q) == 0, "kameraet skal stoppast når koden er funnen"
+    q.close(); pg.bring_to_front()
 
     # Safari på iPhone: rettleiing om appen på Heim-skjermen, og ei anna open fane får med seg importen
     ios = ctx.new_page(); ios.on("pageerror", lambda e: errs.append(str(e)))

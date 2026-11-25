@@ -13,9 +13,9 @@ Superenkel avgangsapp for kollektivtrafikk i heile Noreg, bygd på opne data fr�
 - **Følg bussen**: trykk på ein avgang, så viser kartet kvar bussen eller båten er no, med forseinking. Posisjonane kjem frå Entur sitt sanntids-API for køyretøy. Ikkje alle sender (til dømes Bybanen), og mange sender først når turen har starta.
 - **Søk og kart**: finn stopp med søk (Entur Geocoder) eller på kartet (OpenStreetMap / Leaflet).
 - **Del med familien**: delingslenka inneheld stader, stopp og reiser i `#`-delen av adressa, som aldri blir sendt til nokon server. Ho er komprimert, så ho blir kort og QR-koden lett å skanne. Eldre lenker fungerer framleis.
-  - **QR-kode**: Oppsett → «Vis QR-kode», og skann med kameraet på den andre telefonen. Lenka opnar då i nettlesaren, så på iPhone gjeld det same som under.
+  - **QR-kode**: Oppsett → «Vis QR-kode» på den eine telefonen, og Oppsett → «Skann QR-kode» i Neste på den andre. Då kjem oppsettet rett inn i appen, også i appen på Heim-skjermen på iPhone. Kameraet blir berre brukt medan skannaren er open, og bileta blir lesne på telefonen. (Skannar du med kamera-appen i staden, opnar lenka i nettlesaren, og på iPhone gjeld det same som under.)
   - **Android**: opne lenka i Chrome. Appen på Heim-skjermen deler lagring med Chrome og får med seg oppsettet.
-  - **iPhone**: appen på Heim-skjermen har eiga lagring, skild frå Safari. Kopier lenka, opne Neste frå Heim-skjermen og vel Oppsett → «Opne delingslenke». Opnar du lenka i Safari, minner appen deg på dette.
+  - **iPhone**: appen på Heim-skjermen har eiga lagring, skild frå Safari. Skann QR-koden frå inne i appen (sjå over), eller kopier lenka, opne Neste frå Heim-skjermen og vel Oppsett → «Opne delingslenke». Opnar du lenka i Safari, minner appen deg på dette.
 
 ## Personvern
 
