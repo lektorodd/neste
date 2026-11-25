@@ -129,6 +129,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid 
 .ord .num{color:var(--mute);font-variant-numeric:tabular-nums;font-size:14px}.ord span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .x:disabled{opacity:.25;cursor:default}
 .qr{background:#fff;border-radius:14px;padding:6px;margin:10px auto;width:min(100%,340px)}.qr svg{display:block;width:100%;height:auto}
+.pills{display:grid;gap:3px}
 .avb .wi,.sit .wi{margin:0}.sitx{margin:8px 0;white-space:pre-line}.dlg a{color:var(--bus)}
 footer{font-size:12px;color:var(--mute);text-align:center;margin-top:18px}
 @media(prefers-reduced-motion:reduce){.rt{animation:none}}
@@ -197,6 +198,7 @@ const CALL='realtime cancellation forBoarding quay{latitude longitude} aimedDepa
 const LANG=['nn','no','nob','nb',null,'','en'];
 const pickLang=a=>{const v=(a||[]).filter(x=>x?.value?.trim());const r=LANG.map(l=>v.find(x=>(x.language??null)===l)).find(Boolean)||v[0];return r?r.value.trim():''};
 const sits=new Map(); // situationNumber -> {sum, full}
+const sitIds=a=>(a||[]).map(x=>{const n=x.situationNumber,sum=pickLang(x.summary);if(n&&sum&&!sits.has(n))sits.set(n,{sum});return sum&&n}).filter(Boolean);
 async function gql(q){
  const r=await post(q);
  if(!r.data)throw new Error(r.errors?.[0]?.message||'Tomt svar');
@@ -234,7 +236,12 @@ async function load(){
   const f=(i)=>t.ferry?','+WATER:sel[i]?`,filters:[{select:[{lines:${JSON.stringify(sel[i])}}]}]`:'';
   const qs=A.stops.map((s,i)=>sel[i]&&!sel[i].length?'':`g${i}:stopPlace(id:${JSON.stringify(s.id)}){estimatedCalls(numberOfDepartures:60,timeRange:86400${f(i)}){${CALL}}}`).filter(Boolean);
   const d=qs.length?await gql('{'+qs.join(' ')+'}'):{};
-  if(t.id===cur&&t.id+t.dir===key){data=build(t,A,B,d);data.noLines=!qs.length;err=null;at=new Date()}
+  let rows=build(t,A,B,d);
+  // Ingen direkte avgang du rekk (og ikkje linjefilter): leit etter reiser med eitt bytte. Feilar det, blir det som før.
+  if(!t.ferry&&!want.length&&!rows.some(r=>!r.cancel&&mins(r.dep)-r.walk>=0)&&t.id===cur)
+   try{const x=await transfers(A,B);rows=rows.concat(x);rows.xfer=x.length>0;rows.tried=true}catch(e){}
+  rows.noLines=!qs.length;
+  if(t.id===cur&&t.id+t.dir===key){data=rows;err=null;at=new Date()}
  }catch(e){err=e.message||String(e)}
  busy=false;
  // Bytte reise eller kai medan vi henta: hent på nytt for det som er valt no.
@@ -263,7 +270,7 @@ function build(t,A,B,d){
    const dep=new Date(c.expectedDepartureTime),aim=new Date(c.aimedDepartureTime);
    const r={line:line||'–',mode:sj.line?.transportMode||'bus',dest:c.destinationDisplay?.frontText||'',dep,delay:Math.round((dep-aim)/60000),
     rt:c.realtime,cancel:c.cancellation,occ:c.occupancyStatus,from:s,walk:+s.walk||0,sj:sj.id,quay:c.quay,...best,
-    sit:(c.situations||[]).map(x=>{const n=x.situationNumber,sum=pickLang(x.summary);if(n&&sum&&!sits.has(n))sits.set(n,{sum});return sum&&n}).filter(Boolean)};
+    sit:sitIds(c.situations)};
    // Same tur frå to av stoppa dine: behald det med mest slakk.
    const k=sj.id+'|'+aim.toISOString().slice(0,10),prev=out.get(k);
    if(!prev||(+r.dep-r.walk*60000)>(+prev.dep-prev.walk*60000))out.set(k,r);
@@ -271,6 +278,34 @@ function build(t,A,B,d){
  });
  return[...out.values()];
 }
+
+// Overgangar, første versjon. Journey Planner `trip` frå kvart frå-stopp til kvart til-stopp (maks 9 par i éin spørjing),
+// med start når du er ved stoppet. Berre turar med nøyaktig eitt bytte som startar og sluttar med kollektiv, sidan
+// gangtida til og frå stoppa er den du har sett. `maximumTransfers:1` gir ingen turar hos Entur (25.11.2026), så vi ber om 2 og filtrerer.
+const LEG='mode aimedStartTime expectedStartTime expectedEndTime realtime fromPlace{name quay{latitude longitude}} toPlace{name} line{publicCode transportMode} serviceJourney{id} fromEstimatedCall{destinationDisplay{frontText} cancellation} situations{situationNumber summary{value language}}';
+async function transfers(A,B){
+ const pairs=A.stops.flatMap(a=>B.stops.map(b=>[a,b])).sort((x,y)=>(+x[0].walk||0)+(+x[1].walk||0)-(+y[0].walk||0)-(+y[1].walk||0)).slice(0,9);
+ const at=a=>JSON.stringify(new Date(Date.now()+(+a.walk||0)*60000).toISOString());
+ const d=await gql('{'+pairs.map(([a,b],k)=>`x${k}:trip(from:{place:${JSON.stringify(a.id)}},to:{place:${JSON.stringify(b.id)}},dateTime:${at(a)},numTripPatterns:5,maximumTransfers:2){tripPatterns{legs{${LEG}}}}`).join(' ')+'}');
+ const out=new Map();
+ pairs.forEach(([a,b],k)=>{for(const p of d['x'+k]?.tripPatterns||[]){
+  const L=p.legs||[],tr=L.filter(l=>l.line);
+  if(tr.length!==2||!L[0].line||!L[L.length-1].line)continue;
+  const [l1,l2]=tr,dep=new Date(l1.expectedStartTime),arr=new Date(l2.expectedEndTime);
+  const r={line:l1.line.publicCode||'–',mode:l1.line.transportMode||'bus',dest:l1.fromEstimatedCall?.destinationDisplay?.frontText||'',dep,
+   delay:Math.round((dep-new Date(l1.aimedStartTime))/60000),rt:l1.realtime,cancel:tr.some(l=>l.fromEstimatedCall?.cancellation),
+   from:a,walk:+a.walk||0,sj:l1.serviceJourney?.id,quay:l1.fromPlace?.quay,arr,door:new Date(+arr+(+b.walk||0)*60000),to:b,
+   xfer:{at:l1.toPlace?.name||'',on:l2.fromPlace?.name||'',line:l2.line.publicCode||'–',mode:l2.line.transportMode||'bus',dep:new Date(l2.expectedStartTime),
+    wait:Math.round((new Date(l2.expectedStartTime)-new Date(l1.expectedEndTime))/60000)},
+   sit:[...new Set(tr.flatMap(l=>sitIds(l.situations)))],sitLine:{}};
+  for(const l of tr.slice().reverse())for(const n of sitIds(l.situations))r.sitLine[n]=l.line.publicCode||'–'; // avviket står på linja det gjeld
+  // Same to turar frå fleire stoppar: behald den med mest slakk.
+  const key=tr.map(l=>l.serviceJourney?.id).join('|'),prev=out.get(key);
+  if(!prev||(+r.dep-r.walk*60000)>(+prev.dep-prev.walk*60000))out.set(key,r);
+ }});
+ return[...out.values()];
+}
+const xferTxt=x=>`bytt på ${x.at}${x.on&&x.on!==x.at?' → '+x.on:''} (${x.wait} min)`;
 
 // ---------- reisevising ----------
 function occ(o){
@@ -296,19 +331,19 @@ function tripView(){
  if(best){
   const go=best.walk?(best.leave===0?'Gå no':'Gå om '+best.leave+'<i>min</i>'):(best.leave===0?'Går no':'Går om '+best.leave+'<i>min</i>');
   h+=`<section class="hero" aria-live="polite"><div class="k"><span>${kk}</span>${flip}</div><div class="big">${go}</div>
-   <div class="s"><b>${esc(best.line)}</b> frå ${esc(best.from.name)} kl. ${esc(hm(best.dep))} · framme <b>${esc(hm(best.door))}</b></div>${best.sit.length?sitBtn(best.sit[0],'avb'):''}</section>`;
+   <div class="s"><b>${esc(best.line)}</b> frå ${esc(best.from.name)} kl. ${esc(hm(best.dep))}${best.xfer?`, bytt til <b>${esc(best.xfer.line)}</b> på ${esc(best.xfer.on||best.xfer.at)} kl. ${esc(hm(best.xfer.dep))}`:''} · framme <b>${esc(hm(best.door))}</b></div>${best.sit.length?sitBtn(best.sit[0],'avb'):''}</section>`;
  }else h+=`<section class="hero none"><div class="k"><span>${t.ferry?kk+' · ':''}Ingen avgangar du rekk det neste døgeret.</span>${flip}</div></section>`;
- h+=`<section class="card"><h2>Sortert etter når du er framme <small>${esc(tripName(t))}</small></h2>${list.length?list.map((r,i)=>{
+ h+=`<section class="card"><h2>${data.xfer?'Med eitt bytte <small>ingen direkte avgang du rekk</small>':`Sortert etter når du er framme <small>${esc(tripName(t))}</small>`}</h2>${list.length?list.map((r,i)=>{
   const c=MODEC[r.mode]||'var(--bus)',miss=r.leave<0&&!r.cancel;
   return`<button type="button" data-row="${i}" class="row ${r===best?'best':''} ${miss?'miss':''} ${r.cancel?'cancel':''}" style="--c:${c}" aria-label="Vis ${esc(r.line)} til ${esc(r.dest)} på kartet">
-   <span class="pill">${esc(r.line)}</span>
+   ${r.xfer?`<span class="pills"><span class="pill">${esc(r.line)}</span><span class="pill" style="--c:${MODEC[r.xfer.mode]||'var(--bus)'}">${esc(r.xfer.line)}</span></span>`:`<span class="pill">${esc(r.line)}</span>`}
    <div><div class="dest">${esc(r.cancel?'Innstilt – '+r.dest:r.dest)}</div>
-    <div class="sub">${r.rt?'<span class="rt"></span>':''}${esc(r.from.name)} → ${esc(r.to.name)} · framme ${esc(hm(r.door))}${miss?' · rekk han ikkje':''}${occ(r.occ)}</div>${r.sit.length?`<div class="sub av"><span class="wi" aria-hidden="true">!</span>${esc(sits.get(r.sit[0]).sum)}</div>`:''}</div>
+    <div class="sub">${r.rt?'<span class="rt"></span>':''}${esc(r.from.name)} → ${r.xfer?esc(xferTxt(r.xfer))+' → ':''}${esc(r.to.name)} · framme ${esc(hm(r.door))}${miss?' · rekk han ikkje':''}${occ(r.occ)}</div>${r.sit.length?`<div class="sub av"><span class="wi" aria-hidden="true">!</span>${esc(sits.get(r.sit[0]).sum)}</div>`:''}</div>
    <div class="when"><div class="min">${minHTML(mins(r.dep),r.dep)}</div><div class="clock">${esc(hm(r.dep))} ${r.delay>=2?`<span class="late">+${r.delay}</span>`:''}</div></div></button>`;
- }).join('')+'<p class="note">Trykk på ein avgang for å sjå kvar han er no.</p>':`<div class="empty">${data.noLines?`Fann ikkje linje ${esc(tripLines(t).join(', '))} ved stoppa i ${esc(A.name)}.`:'Fann ingen avgangar mellom desse stadane.'}</div>`}</section>`;
+ }).join('')+'<p class="note">Trykk på ein avgang for å sjå kvar han er no.</p>':`<div class="empty">${data.noLines?`Fann ikkje linje ${esc(tripLines(t).join(', '))} ved stoppa i ${esc(A.name)}.`:`Fann ingen avgangar mellom desse stadane${data.tried?', heller ikkje med eitt bytte':''}.`}</div>`}</section>`;
  // Alle avvik på avgangane i lista, med linjene dei gjeld. Trykk for heile teksten. Vy lagar eitt avvik per avgang
  // («Færre vogner»), så like samandrag blir slegne saman og viser teksten til det første.
- const av=new Map();for(const r of list)for(const n of r.sit){const k=sits.get(n).sum,o=av.get(k)||{n,l:new Set()};o.l.add(r.line);av.set(k,o)}
+ const av=new Map();for(const r of list)for(const n of r.sit){const k=sits.get(n).sum,o=av.get(k)||{n,l:new Set()};o.l.add(r.sitLine?.[n]||r.line);av.set(k,o)}
  if(av.size)h+=`<section class="card"><h2>Avvik <small>trykk for heile meldinga</small></h2>${[...av.values()].map(o=>sitBtn(o.n,'sit',[...o.l])).join('')}</section>`;
  return h;
 }

@@ -3,7 +3,7 @@
 Køyr:  pip install playwright && playwright install chromium
        python tests/mock_test.py
 Skjermbilete hamnar i tests/out/. Testen går gjennom oppsettet
-(søk, legg til stopp, ny stad, reise + retur), reisevisinga, linjefilteret, avvik, rekkjefølgja, QR-koden,
+(søk, legg til stopp, ny stad, reise + retur), reisevisinga, linjefilteret, avvik, rekkjefølgja, QR-koden, overgangar,
 følgjekartet (Leaflet frå cdnjs; blir hoppa over utan nett), kvar ein
 stad er (stopp i nærleiken med gangtid) og ferjesamband (snu kai, og kai vald etter påfunnen posisjon). Sjekkar òg
 manifest og ikon.
@@ -73,6 +73,28 @@ def ferry_call(sid, line, dep, mode="water"):
                   "latitude": KAI[other][1], "longitude": 5.0}}},
                  "aimedArrivalTime": iso(dep + 20), "expectedArrivalTime": iso(dep + 20)}]}}
 
+FJERN = "NSR:StopPlace:4001"  # påfunnen stad utan direkte avgang frå Testvik
+
+def leg(line, dep, arr, frm, to, sj=None, aimed=None, sit=()):
+    if line is None:
+        return {"mode": "foot", "line": None, "aimedStartTime": iso(dep), "expectedStartTime": iso(dep), "expectedEndTime": iso(arr),
+                "fromPlace": {"name": frm, "quay": None}, "toPlace": {"name": to}}
+    return {"mode": "bus", "aimedStartTime": iso(aimed if aimed is not None else dep), "expectedStartTime": iso(dep), "expectedEndTime": iso(arr),
+            "realtime": True, "fromPlace": {"name": frm, "quay": {"latitude": 60.0, "longitude": 5.0}}, "toPlace": {"name": to},
+            "line": {"publicCode": line, "transportMode": "bus"}, "serviceJourney": {"id": sj or f"T:SJ:{line}-{dep}"},
+            "fromEstimatedCall": {"destinationDisplay": {"frontText": "Sentrum" if line != "7" else "Fjernby"}, "cancellation": False},
+            "situations": [{"situationNumber": n, "summary": SIT[n]} for n in sit]}
+
+def trips(frm):
+    """Påfunne reiser med bytte i Sentrum. Berre den første typen (eitt bytte, utan gange først/sist) skal visast."""
+    first = ("1", 10, 25, "Testvik øvre") if frm == A else ("1E", 14, 27, "Testvik nedre")
+    ok = [leg(first[0], first[1], first[2], first[3], "Sentrum terminal", aimed=first[1] - 1),
+          leg(None, first[2], first[2] + 3, "Sentrum terminal", "Sentrum torg"),
+          leg("7", 31, 50, "Sentrum torg", "Fjernby", sj="T:SJ:7-31", sit=["T:SituationNumber:2"])]
+    walk_first = [leg(None, 0, 4, first[3], "Anna stopp")] + ok
+    two = [ok[0], leg("2", 27, 29, "Sentrum terminal", "Sentrum torg"), ok[2]]
+    return [{"legs": ok}, {"legs": walk_first}, {"legs": two}]
+
 def jp(route):
     q = json.loads(route.request.post_data)["query"]
     queries.append(q)
@@ -89,6 +111,11 @@ def jp(route):
                           "advice": [], "infoLinks": [{"uri": "https://example.org/avvik", "label": "Meir om avviket"},
                                                       {"uri": "javascript:alert(1)", "label": "farleg"}],
                           "validityPeriods": [{"startTime": iso(-60), "endTime": iso(600)}]}
+    for k in range(9):  # reiser med bytte
+        if f"x{k}:trip(" in q:
+            seg = q.split(f"x{k}:trip(")[1]
+            frm, to = seg.split('place:"')[1].split('"')[0], seg.split('place:"')[2].split('"')[0]
+            d[f"x{k}"] = {"tripPatterns": trips(frm) if to == FJERN else []}
     for i in range(4):  # linjene ved eit stopp (til linjefilteret)
         if f"l{i}:stopPlace(" in q:
             sid = q.split(f'l{i}:stopPlace(id:"')[1].split('"')[0]
@@ -317,6 +344,35 @@ with sync_playwright() as p:
     moved = pg.evaluate("JSON.parse(localStorage.getItem('neste.pts'))")
     assert moved.get(heim_id, {}).get("lat") == 60.2, moved
     assert pg.evaluate("localStorage.getItem('neste.home')") is None
+
+    # Overgangar: ingen direkte avgang til Fjernby, så appen søkjer etter reiser med eitt bytte frå kvart stopp
+    pg.evaluate("""() => { const c = JSON.parse(localStorage.getItem('neste.cfg'));
+        c.places.push({id: 'fj', name: 'Fjernby', stops: [{id: 'NSR:StopPlace:4001', name: 'Fjernby', label: '', mode: 'bus', walk: 2}]});
+        c.trips.push({id: 'tf', from: c.places[0].id, to: 'fj', lines: ''}, {id: 'tl', from: c.places[0].id, to: 'fj', lines: '1'});
+        localStorage.setItem('neste.cfg', JSON.stringify(c)); localStorage.setItem('neste.cur', JSON.stringify('tf')) }""")
+    pg.reload(); pg.wait_for_timeout(1000)
+    q = next(x for x in reversed(queries) if "x0:trip(" in x)
+    assert "maximumTransfers:2" in q and 'place:"NSR:StopPlace:4001"' in q and "x1:trip(" in q, q[:300]
+    walk_a = pg.evaluate("JSON.parse(localStorage.getItem('neste.cfg')).places[0].stops[0].walk")
+    t0 = dt.datetime.fromisoformat(q.split('dateTime:"')[1].split('"')[0].replace("Z", "+00:00"))
+    assert abs((t0 - dt.datetime.now(dt.timezone.utc)).total_seconds() / 60 - walk_a) < 1.5, "søket skal starte når du er ved stoppet"
+    assert pg.locator(".card h2").first.inner_text().startswith("Med eitt bytte")
+    rows = pg.locator(".row")
+    assert rows.count() == 2, rows.all_inner_texts()
+    assert [rows.nth(i).locator(".pill").all_inner_texts() for i in range(2)] == [["1", "7"], ["1E", "7"]]
+    assert "bytt på Sentrum terminal → Sentrum torg (6 min)" in rows.first.inner_text(), rows.first.inner_text()
+    hero = pg.locator(".hero .s").inner_text()
+    assert "bytt til 7 på Sentrum torg" in hero, hero
+    assert "Heisen er ute av drift" in rows.first.inner_text(), "avvik på den andre turen skal visast"
+    assert pg.locator(".card .sit .ln").all_inner_texts() == ["7"], "avviket gjeld linje 7, ikkje den første bussen"
+    pg.screenshot(path=str(OUT / "bytte.png"), full_page=True)
+    rows.first.click(); pg.wait_for_timeout(1500)  # følg den første turen
+    if "lasta ikkje" not in pg.locator("#mapNote").inner_text():
+        assert "Testvik øvre" in pg.locator("#mapNote").inner_text()
+        pg.click("[data-act=mapClose]"); pg.wait_for_timeout(200)
+    n = len(queries); pg.locator("#chips button", has_text="Heim → Fjernby").nth(1).click(); pg.wait_for_timeout(800)
+    assert not any("trip(" in x for x in queries[n:]), "med linjefilter skal appen ikkje leite etter bytte"
+    assert "Fann ingen avgangar" in pg.locator("#app").inner_text()
 
     # Delingslenke med eit samband blir importert og vaska
     import base64

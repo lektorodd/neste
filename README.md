@@ -4,6 +4,7 @@ Superenkel avgangsapp for kollektivtrafikk i heile Noreg, bygd på opne data fr�
 
 - **Stader**: ein stad (t.d. «Heim», «Jobb») er eit sett med stopp du brukar der, med gangtid til kvart stopp. Seier du kvar staden er (adresse, skule, arbeidsplass), viser appen stopp innan 1,5 km med gangtid rekna langs vegane, og nye stopp får ekte gangtid.
 - **Reiser**: frå ein stad til ein annan. Appen samanliknar alle avgangar frå stoppa dine og sorterer etter når du er framme dør til dør.
+  Finst det ingen direkte avgang du rekk, viser appen reiser med eitt bytte (begge linjene, kvar du byter og kor lang tid du har).
   Vil du berre ha nokre linjer (t.d. «40, 40E»), hentar appen berre avgangane for dei, så lista held i mange timar også på store terminalar.
 - **Rekkjefølgje**: flytt reiser og samband opp og ned under Oppsett → «Rekkjefølgje». Den første opnar når appen ikkje har noko anna val, til dømes rett etter import.
 - **Ferjesamband**: éi oppføring for begge retningar (t.d. «A ⇄ B»). Søk opp kaien og vel kaien på andre sida, så viser appen berre ferjer frå kaien du er ved. «Snu» byter side. Vil du, kan appen velje kai etter posisjonen din. Posisjonen blir då berre samanlikna med kaiane på eininga di og verken lagra eller sendt.
