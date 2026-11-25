@@ -44,7 +44,14 @@ main{display:grid;gap:12px}
 .card h2{font-size:15px;font-weight:700;margin-bottom:6px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
 .card h2 small{font-weight:400;color:var(--mute);font-size:13px}
 .hero{background:var(--sig);color:#0e1116;border-radius:24px;padding:18px 18px 16px}
-.hero .k{font-size:14px;font-weight:600}
+.hero .k{font-size:14px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.hero .k small{font-weight:500;opacity:.75;font-size:13px}
+.flip{flex:none;border:0;border-radius:999px;height:38px;padding:0 14px;font-weight:800;font-size:14px;background:#0e1116;color:var(--sig)}
+.hero.none .flip{background:var(--ink);color:var(--bg)}
+.chk{display:flex;gap:10px;align-items:center;margin-top:10px;font-size:14px}
+.chk input{width:22px;height:22px;flex:none;accent-color:var(--bus)}
+.res.inl{position:static;margin-top:8px;box-shadow:none}
+.dlg .card{max-height:80vh;overflow:auto}
 .hero .big{font-size:clamp(48px,15vw,84px);font-weight:900;font-stretch:125%;line-height:.92;letter-spacing:-.03em;margin:6px 0 8px;font-variant-numeric:tabular-nums}
 .hero .big i{font-style:normal;font-size:.32em;letter-spacing:0;margin-left:6px}
 .hero .s{font-size:16px;font-weight:600}.hero .s b{font-weight:900}
@@ -140,10 +147,17 @@ const ls={get(k,d){try{const v=localStorage.getItem('neste.'+k);return v==null?d
 let cfg=ls.get('cfg',null)||{places:[{id:uid(),name:'Heim',stops:[]}],trips:[]};
 let homePt=ls.get('home',null); // {lat,lon} – blir aldri delt
 let cur=ls.get('cur',null),view='trip';
-let data=null,err=null,at=null,busy=false,shown=[];
+let data=null,err=null,at=null,busy=false,shown=[],autoBy='';
 const save=()=>{ls.set('cfg',cfg)};
 const place=id=>cfg.places.find(p=>p.id===id);
-const tripName=t=>`${place(t.from)?.name||'?'} → ${place(t.to)?.name||'?'}`;
+const tripName=t=>t.ferry?`${t.ferry.a.name} ⇄ ${t.ferry.b.name}`:`${place(t.from)?.name||'?'} → ${place(t.to)?.name||'?'}`;
+// Ei reise er anten frå stad til stad, eller eit ferjesamband {ferry:{a,b},dir:'ab'|'ba'} som blir vist frå den kaien du er ved.
+function ends(t){
+ if(!t.ferry)return[place(t.from),place(t.to)];
+ const P=e=>({name:e.name,stops:[{id:e.id,name:e.full||e.name,walk:0}]}),{a,b}=t.ferry;
+ return t.dir==='ba'?[P(b),P(a)]:[P(a),P(b)];
+}
+const short=n=>String(n).replace(/\s+(ferjekai|ferjeleie|ferjeterminal|ferjestø|kai)$/i,'')||n;
 
 // ---------- Entur ----------
 async function post(q,url=JP){
@@ -152,7 +166,8 @@ async function post(q,url=JP){
 }
 // Sjekka mot Journey Planner v3 25.11.2026. `next` er stoppa etter denne avgangen (rett dato, også over midnatt).
 // Stopp i svaret er barne-stopp (t.d. ein kai); `parent.id` er den ID-en geocoderen og nearest gir.
-const CALL='realtime cancellation forBoarding quay{latitude longitude}aimedDepartureTime expectedDepartureTime occupancyStatus destinationDisplay{frontText} serviceJourney{id line{publicCode transportMode}} serviceJourneyEstimatedCalls{next{forAlighting quay{stopPlace{id parent{id}}} aimedArrivalTime expectedArrivalTime}}';
+const WATER='filters:[{select:[{transportModes:[{transportMode:water}]}]}]'; // berre ferjer og båtar
+const CALL='realtime cancellation forBoarding quay{latitude longitude} aimedDepartureTime expectedDepartureTime occupancyStatus destinationDisplay{frontText} serviceJourney{id line{publicCode transportMode}} serviceJourneyEstimatedCalls{next{forAlighting quay{stopPlace{id parent{id}}} aimedArrivalTime expectedArrivalTime}}';
 async function gql(q){
  const r=await post(q);
  if(!r.data)throw new Error(r.errors?.[0]?.message||'Tomt svar');
@@ -166,14 +181,17 @@ const pickMode=v=>{const c=[].concat(v||[]).join(' ');return(MODES.find(([,re])=
 async function load(){
  const t=cfg.trips.find(x=>x.id===cur);
  if(!t||busy||view!=='trip')return;
- const A=place(t.from),B=place(t.to);
+ const [A,B]=ends(t),key=t.id+t.dir;
  if(!A?.stops.length||!B?.stops.length){data=[];err=null;render();return}
  busy=true;$('#status').textContent='Hentar …';
  try{
-  const d=await gql('{'+A.stops.map((s,i)=>`g${i}:stopPlace(id:${JSON.stringify(s.id)}){estimatedCalls(numberOfDepartures:60,timeRange:86400){${CALL}}}`).join(' ')+'}');
-  if(t.id===cur){data=build(t,A,B,d);err=null;at=new Date()}
+  const d=await gql('{'+A.stops.map((s,i)=>`g${i}:stopPlace(id:${JSON.stringify(s.id)}){estimatedCalls(numberOfDepartures:60,timeRange:86400${t.ferry?','+WATER:''}){${CALL}}}`).join(' ')+'}');
+  if(t.id===cur&&t.id+t.dir===key){data=build(t,A,B,d);err=null;at=new Date()}
  }catch(e){err=e.message||String(e)}
- busy=false;render();
+ busy=false;
+ // Bytte reise eller kai medan vi henta: hent på nytt for det som er valt no.
+ const n=cfg.trips.find(x=>x.id===cur);if(n&&n.id+n.dir!==key){load();return}
+ render();
 }
 function build(t,A,B,d){
  const lines=(t.lines||'').split(/[\s,]+/).filter(Boolean).map(s=>s.toUpperCase());
@@ -183,6 +201,7 @@ function build(t,A,B,d){
    if(c.forBoarding===false)continue;
    const sj=c.serviceJourney,line=sj.line?.publicCode||'';
    if(lines.length&&!lines.includes(line.toUpperCase()))continue;
+   if(t.ferry&&sj.line?.transportMode!=='water')continue;
    let best=null;
    for(const x of c.serviceJourneyEstimatedCalls?.next||[]){
     if(x.forAlighting===false)continue; // t.d. ekspressbussar som berre tek på passasjerar ut av byen
@@ -213,8 +232,10 @@ function occ(o){
 function minHTML(m,d){return m<=0?'Nå':m>=60?esc(hm(d)):m+'<i>min</i>'}
 function tripView(){
  const t=cfg.trips.find(x=>x.id===cur);
- if(!t)return`<section class="card"><h2>Kom i gang</h2><p class="empty">Lag ein stad (til dømes «Heim») med stoppa du brukar, ein stad til, og ei reise mellom dei.</p><div class="btns"><button class="cta" type="button" data-act="openSetup">Set opp</button></div></section>`;
- const A=place(t.from),B=place(t.to);
+ if(!t)return`<section class="card"><h2>Kom i gang</h2><p class="empty">Lag ein stad (til dømes «Heim») med stoppa du brukar, ein stad til, og ei reise mellom dei. Skal du berre ta ferja, legg til eit ferjesamband.</p><div class="btns"><button class="cta" type="button" data-act="openSetup">Set opp</button><button class="sec" type="button" data-act="ferry">+ Ferjesamband</button></div></section>`;
+ const [A,B]=ends(t);
+ const flip=t.ferry?'<button class="flip" type="button" data-act="flip" aria-label="Snu: vis ferjer frå andre sida">⇄ Snu</button>':'';
+ const kk=t.ferry?`Frå ${esc(A.name)} til ${esc(B.name)}${autoBy===t.id+t.dir?' <small>· etter posisjonen din</small>':''}`:`Raskast til ${esc(B.name)}`;
  if(!A?.stops.length||!B?.stops.length)return`<section class="card"><h2>${esc(tripName(t))}</h2><p class="empty">Begge stadane treng minst eitt stopp.</p><div class="btns"><button class="cta" type="button" data-act="openSetup">Opne oppsett</button></div></section>`;
  if(err&&!data)return`<section class="card"><h2>Fekk ikkje kontakt med Entur</h2><p class="empty">${esc(err)}</p></section>`;
  if(!data)return'';
@@ -225,9 +246,9 @@ function tripView(){
  let h='';
  if(best){
   const go=best.walk?(best.leave===0?'Gå no':'Gå om '+best.leave+'<i>min</i>'):(best.leave===0?'Går no':'Går om '+best.leave+'<i>min</i>');
-  h+=`<section class="hero" aria-live="polite"><div class="k">Raskast til ${esc(B.name)}</div><div class="big">${go}</div>
+  h+=`<section class="hero" aria-live="polite"><div class="k"><span>${kk}</span>${flip}</div><div class="big">${go}</div>
    <div class="s"><b>${esc(best.line)}</b> frå ${esc(best.from.name)} kl. ${esc(hm(best.dep))} · framme <b>${esc(hm(best.door))}</b></div></section>`;
- }else h+=`<section class="hero none"><div class="k">Ingen avgangar du rekk det neste døgeret.</div></section>`;
+ }else h+=`<section class="hero none"><div class="k"><span>${t.ferry?kk+' · ':''}Ingen avgangar du rekk det neste døgeret.</span>${flip}</div></section>`;
  h+=`<section class="card"><h2>Sortert etter når du er framme <small>${esc(tripName(t))}</small></h2>${list.length?list.map((r,i)=>{
   const c=MODEC[r.mode]||'var(--bus)',miss=r.leave<0&&!r.cancel;
   return`<button type="button" data-row="${i}" class="row ${r===best?'best':''} ${miss?'miss':''} ${r.cancel?'cancel':''}" style="--c:${c}" aria-label="Vis ${esc(r.line)} til ${esc(r.dest)} på kartet">
@@ -241,6 +262,7 @@ function tripView(){
 
 // ---------- oppsett ----------
 function setupView(){
+ const fer=cfg.trips.filter(t=>t.ferry);
  const opts=sel=>cfg.places.map(p=>`<option value="${esc(p.id)}"${p.id===sel?' selected':''}>${esc(p.name)}</option>`).join('');
  return`<section class="card"><h2>Stader <small>ein stad = stoppa du brukar der, med gangtid</small></h2></section>
  ${cfg.places.map(p=>`<section class="card" data-place="${esc(p.id)}">
@@ -252,12 +274,17 @@ function setupView(){
   <div class="btns"><button class="sec" type="button" data-act="openMap">Finn på kart</button></div></section>`).join('')}
  <div class="btns" style="margin:0"><button class="sec" type="button" data-act="padd">+ Ny stad</button></div>
  <section class="card"><h2>Reiser</h2>
-  ${cfg.trips.map(t=>`<div class="trip" data-trip="${esc(t.id)}"><select data-act="tfrom" aria-label="Frå">${opts(t.from)}</select><span class="arrow">→</span><select data-act="tto" aria-label="Til">${opts(t.to)}</select>
+  ${cfg.trips.filter(t=>!t.ferry).map(t=>`<div class="trip" data-trip="${esc(t.id)}"><select data-act="tfrom" aria-label="Frå">${opts(t.from)}</select><span class="arrow">→</span><select data-act="tto" aria-label="Til">${opts(t.to)}</select>
    <button class="x" type="button" data-act="tdel" aria-label="Slett reise">×</button>
    <input class="l" placeholder="Berre linjer (valfritt), t.d. 40, 40E" value="${esc(t.lines||'')}" data-act="tlines">
    <button class="sec" type="button" data-act="trev" title="Lag retur">⇄</button></div>`).join('')||'<p class="empty">Ingen reiser enno.</p>'}
   <div class="btns"><button class="sec" type="button" data-act="tadd"${cfg.places.length<2?' disabled':''}>+ Ny reise</button></div>
   ${cfg.places.length<2?'<p class="note">Du treng minst to stader for å lage ei reise.</p>':''}</section>
+ <section class="card"><h2>Ferjesamband <small>éi oppføring for begge retningar</small></h2>
+  ${fer.map(t=>`<div class="stop" data-trip="${esc(t.id)}" style="--c:var(--water)"><span class="dot"></span><div>${esc(tripName(t))}</div><span></span><button class="x" type="button" data-act="tdel" aria-label="Slett samband">×</button></div>`).join('')||'<p class="empty">Ingen samband enno.</p>'}
+  ${fer.length?`<label class="chk"><input type="checkbox" data-act="autoside"${ls.get('autoside',false)?' checked':''}> Vel kai etter kvar eg er</label>
+  <p class="note">Appen samanliknar posisjonen din med dei to kaiane, berre på denne eininga. Posisjonen blir ikkje lagra og ikkje sendt nokon stad. Utan posisjon viser appen den sida du såg på sist.</p>`:''}
+  <div class="btns"><button class="sec" type="button" data-act="ferry">+ Ferjesamband</button></div></section>
  <section class="card"><h2>Heimepunkt <small>valfritt</small></h2>
   <p class="note">Set eit punkt på kartet, så føreslår appen gangtid når du legg til stopp. Punktet blir berre lagra her og er aldri med i delingslenka. ${homePt?'<b>Punktet er sett.</b>':''}</p>
   <div class="btns">${homePt?'<button class="sec" type="button" data-act="homeDel">Fjern heimepunkt</button>':''}</div></section>
@@ -272,34 +299,90 @@ function render(){
  const chips=$('#chips');
  chips.innerHTML=view==='trip'?cfg.trips.map(t=>`<button type="button" data-trip-id="${esc(t.id)}" aria-pressed="${t.id===cur}">${esc(tripName(t))}</button>`).join(''):'';
  chips.hidden=view!=='trip'||!cfg.trips.length;
+ const on=chips.querySelector('[aria-pressed=true]');if(on)chips.scrollLeft=on.offsetLeft-chips.offsetLeft-8;
  if(view==='trip')$('#app').innerHTML=tripView();
  $('#setup').textContent=view==='trip'?'Oppsett':'Ferdig';
  $('#status').hidden=view!=='trip'||!cur;
  $('#status').innerHTML=err?'<b>Feil</b> · prøv igjen':at?`<b>${esc(hm(at))}</b>`:'…';
 }
 function renderSetup(){$('#app').innerHTML=setupView();render()}
-function go(v){view=v;if(v==='setup'){renderSetup()}else{if(!cfg.trips.find(t=>t.id===cur))cur=cfg.trips[0]?.id||null;ls.set('cur',cur);data=null;render();load()}}
+function go(v){view=v;if(v==='setup'){renderSetup()}else{if(!cfg.trips.find(t=>t.id===cur))cur=cfg.trips[0]?.id||null;ls.set('cur',cur);data=null;render();load();autoSide()}}
 
 // ---------- søk ----------
 let st=null;
 async function search(inp){
- const q=inp.value.trim(),box=inp.nextElementSibling;
+ const q=inp.value.trim(),box=inp.nextElementSibling,act=inp.dataset.pick||'pick';
  if(q.length<2){box.hidden=true;return}
  try{
   const r=await fetch(`${GEO}?text=${encodeURIComponent(q)}&layers=venue&size=8&lang=no`,{headers:{'ET-Client-Name':CLIENT}});
   const j=await r.json();
   const f=(j.features||[]).filter(x=>String(x.properties?.id||'').startsWith('NSR:StopPlace'));
   box.innerHTML=f.length?f.map(x=>{const p=x.properties,[lon,lat]=x.geometry?.coordinates||[];
-   return`<button type="button" data-act="pick" data-id="${esc(p.id)}" data-name="${esc(p.name)}" data-label="${esc(p.label)}" data-lat="${esc(lat)}" data-lon="${esc(lon)}" data-mode="${esc(pickMode(p.category))}">${esc(p.name)}<small>${esc(p.label)}</small></button>`}).join(''):'<p class="empty" style="padding:10px 14px">Ingen treff.</p>';
+   return`<button type="button" data-act="${act}" data-id="${esc(p.id)}" data-name="${esc(p.name)}" data-label="${esc(p.label)}" data-lat="${esc(lat)}" data-lon="${esc(lon)}" data-mode="${esc(pickMode(p.category))}">${esc(p.name)}<small>${esc(p.label)}</small></button>`}).join(''):'<p class="empty" style="padding:10px 14px">Ingen treff.</p>';
   box.hidden=false;
  }catch(e){box.innerHTML='<p class="empty" style="padding:10px 14px">Søket feila.</p>';box.hidden=false}
 }
+function dist(la1,lo1,la2,lo2){ // meter, luftline
+ const R=6371e3,toR=Math.PI/180,dl=(la2-la1)*toR,dn=(lo2-lo1)*toR;
+ const a=Math.sin(dl/2)**2+Math.cos(la1*toR)*Math.cos(la2*toR)*Math.sin(dn/2)**2;
+ return 2*R*Math.asin(Math.sqrt(a));
+}
 function walkGuess(lat,lon){
  if(!homePt||lat==null)return 5;
- const R=6371e3,toR=Math.PI/180,dl=(lat-homePt.lat)*toR,dn=(lon-homePt.lon)*toR;
- const a=Math.sin(dl/2)**2+Math.cos(lat*toR)*Math.cos(homePt.lat*toR)*Math.sin(dn/2)**2;
- const m=2*R*Math.asin(Math.sqrt(a))*1.3; // omveg-faktor
+ const m=dist(homePt.lat,homePt.lon,lat,lon)*1.3; // omveg-faktor
  return Math.max(1,Math.round(m/80));
+}
+
+// ---------- ferjesamband ----------
+let fFrom=null,fTo=[];
+const fEnd=e=>({id:String(e.id),name:short(e.name),full:String(e.full||e.name),lat:e.lat==null?null:+e.lat,lon:e.lon==null?null:+e.lon});
+const closeBtn='<button class="sec" type="button" data-act="impNo">Avbryt</button>';
+function ferryDialog(){
+ fFrom=null;fTo=[];
+ dialog(`<h2>Nytt ferjesamband</h2><p class="note">Søk etter ferjekaien på ei av sidene.</p>
+  <div class="srch"><input type="search" placeholder="Søk etter ferjekai" data-act="search" data-pick="fpick" autocomplete="off" enterkeyhint="search"><div class="res inl" hidden></div></div>
+  <div class="btns">${closeBtn}</div>`);
+ $('#dlg input').focus();
+}
+// Finn kaiane ferjene frå denne kaien går til.
+async function ferryFrom(s){
+ dialog(`<h2>${esc(s.name)}</h2><p class="note">Hentar ferjesamband …</p>`);
+ try{
+  const d=await gql(`{stopPlace(id:${JSON.stringify(s.id)}){name latitude longitude estimatedCalls(numberOfDepartures:60,timeRange:86400,${WATER}){serviceJourney{line{publicCode}} serviceJourneyEstimatedCalls{next{forAlighting quay{stopPlace{id name latitude longitude parent{id name latitude longitude}}}}}}}}`);
+  const sp=d.stopPlace,to=new Map();
+  fFrom={id:s.id,name:sp?.name||s.name,lat:sp?.latitude,lon:sp?.longitude};
+  for(const c of sp?.estimatedCalls||[])for(const x of c.serviceJourneyEstimatedCalls?.next||[]){
+   const q=x.quay?.stopPlace,p=q?.parent||q;
+   if(x.forAlighting===false||!p?.id||p.id===s.id)continue;
+   const o=to.get(p.id)||{id:p.id,name:p.name,lat:p.latitude,lon:p.longitude,lines:new Set(),n:0};
+   o.lines.add(c.serviceJourney?.line?.publicCode||'');o.n++;to.set(p.id,o);
+  }
+  fTo=[...to.values()].sort((a,b)=>b.n-a.n);
+  dialog(fTo.length?`<h2>Ferje frå ${esc(short(fFrom.name))}</h2><p class="note">Vel kaien på andre sida.</p>
+   <div class="res inl">${fTo.map((o,i)=>`<button type="button" data-act="froute" data-i="${i}">${esc(o.name)}<small>Linje ${esc([...o.lines].filter(Boolean).join(', ')||'–')}</small></button>`).join('')}</div>
+   <div class="btns">${closeBtn}</div>`
+  :`<h2>Fann ingen ferjer</h2><p class="note">Ingen ferjeavgangar frå ${esc(s.name)} det neste døgeret. Prøv å søkje etter sjølve ferjekaien.</p><div class="btns"><button class="cta" type="button" data-act="ferry">Søk på nytt</button>${closeBtn}</div>`);
+ }catch(e){dialog(`<h2>Fekk ikkje kontakt med Entur</h2><p class="note">${esc(e.message)}</p><div class="btns">${closeBtn}</div>`)}
+}
+function ferryMake(o){
+ if(!o||!fFrom)return;
+ const key=[fFrom.id,o.id].sort().join();
+ let t=cfg.trips.find(x=>x.ferry&&[x.ferry.a.id,x.ferry.b.id].sort().join()===key);
+ if(!t){t={id:uid(),ferry:{a:fEnd(fFrom),b:fEnd(o)},dir:'ab'};cfg.trips.push(t)}
+ save();$('#dlg').innerHTML='';cur=t.id;go('trip');
+}
+// Vel kai etter posisjonen: den næraste kaien er der du er. Posisjonen blir berre samanlikna her og aldri lagra.
+let hiddenAt=0;
+function autoSide(){
+ const t=cfg.trips.find(x=>x.id===cur);
+ if(!t?.ferry||!ls.get('autoside',false)||!navigator.geolocation)return;
+ const {a,b}=t.ferry;if(a.lat==null||b.lat==null)return;
+ navigator.geolocation.getCurrentPosition(p=>{
+  if(cur!==t.id)return;
+  const {latitude:la,longitude:lo}=p.coords,dir=dist(la,lo,a.lat,a.lon)<=dist(la,lo,b.lat,b.lon)?'ab':'ba';
+  autoBy=t.id+dir;
+  if(dir!==t.dir){t.dir=dir;save();data=null;err=null;render();load()}else if(view==='trip')render();
+ },()=>{},{maximumAge:120000,timeout:10000});
 }
 function addStop(pid,s){
  const p=place(pid);if(!p||p.stops.some(x=>x.id===s.id))return;
@@ -415,7 +498,7 @@ function checkImport(){
   const o=JSON.parse(b64d(m[1]));
   if(!Array.isArray(o.p)||!Array.isArray(o.t))throw 0;
   window._imp={places:o.p.map(p=>({id:String(p.id),name:String(p.name),stops:(p.stops||[]).map(s=>({id:String(s.id),name:String(s.name),label:String(s.label||''),mode:String(s.mode||'bus'),walk:+s.walk||0}))})),
-   trips:o.t.map(t=>({id:String(t.id),from:String(t.from),to:String(t.to),lines:String(t.lines||'')}))};
+   trips:o.t.map(t=>t.ferry?{id:String(t.id),ferry:{a:fEnd(t.ferry.a),b:fEnd(t.ferry.b)},dir:t.dir==='ba'?'ba':'ab'}:{id:String(t.id),from:String(t.from),to:String(t.to),lines:String(t.lines||'')})};
   dialog(`<h2>Importere oppsett?</h2><p class="note">${window._imp.places.length} stader og ${window._imp.trips.length} reiser. Dette erstattar oppsettet ditt her.</p><div class="btns"><button class="cta" type="button" data-act="impYes">Importer</button><button class="sec" type="button" data-act="impNo">Avbryt</button></div>`);
  }catch(e){dialog('<h2>Lenka var øydelagd</h2><div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div>')}
  history.replaceState(null,'',location.pathname+location.search);
@@ -424,7 +507,7 @@ function checkImport(){
 // ---------- hendingar ----------
 document.addEventListener('click',async e=>{
  const tb=e.target.closest('[data-trip-id]');
- if(tb){cur=tb.dataset.tripId;ls.set('cur',cur);data=null;err=null;at=null;render();load();return}
+ if(tb){cur=tb.dataset.tripId;ls.set('cur',cur);data=null;err=null;at=null;render();load();autoSide();return}
  const rb=e.target.closest('[data-row]');
  if(rb){openFollow(shown[+rb.dataset.row]);return}
  const b=e.target.closest('[data-act]');if(!b||b.matches('input,select'))return;
@@ -437,6 +520,10 @@ document.addEventListener('click',async e=>{
   case'pdel':if(cfg.trips.some(x=>x.from===pid||x.to===pid)){dialog(`<h2>Staden er i bruk</h2><p class="note">Slett reisene som brukar «${esc(p.name)}» først.</p><div class="btns"><button class="sec" type="button" data-act="impNo">OK</button></div>`)}else{cfg.places=cfg.places.filter(x=>x.id!==pid);re()}break;
   case'sdel':p.stops.splice(+b.dataset.i,1);re();break;
   case'pick':addStop(pid,b.dataset);re();break;
+  case'ferry':ferryDialog();break;
+  case'fpick':ferryFrom(b.dataset);break;
+  case'froute':ferryMake(fTo[+b.dataset.i]);break;
+  case'flip':{const f=cfg.trips.find(x=>x.id===cur);if(!f?.ferry)break;f.dir=f.dir==='ba'?'ab':'ba';autoBy='';save();data=null;err=null;render();load()}break;
   case'openMap':openMap(pid);break;
   case'tadd':cfg.trips.push({id:uid(),from:cfg.places[0].id,to:cfg.places[1].id,lines:''});re();break;
   case'tdel':cfg.trips=cfg.trips.filter(x=>x!==t);re();break;
@@ -461,13 +548,20 @@ document.addEventListener('change',e=>{
  else if(a==='tfrom'){t.from=el.value;save()}
  else if(a==='tto'){t.to=el.value;save()}
  else if(a==='tlines'){t.lines=el.value;save()}
+ else if(a==='autoside'){
+  ls.set('autoside',el.checked);
+  // Spør om lov med ein gong, så ein ikkje blir spurd midt i ei avgangsliste.
+  if(el.checked)navigator.geolocation?.getCurrentPosition(()=>{},()=>{el.checked=false;ls.set('autoside',false);
+   dialog(`<h2>Fekk ikkje posisjonen</h2><p class="note">Gi nettlesaren lov til å bruke posisjonen, eller vel kai med «Snu».</p><div class="btns">${closeBtn}</div>`)},{timeout:15000});
+ }
 });
 document.addEventListener('input',e=>{if(e.target.dataset.act==='search'){clearTimeout(st);const i=e.target;st=setTimeout(()=>search(i),250)}});
 $('#setup').addEventListener('click',()=>go(view==='trip'?'setup':'trip'));
 $('#status').addEventListener('click',load);
-document.addEventListener('visibilitychange',()=>{if(document.hidden)return;if(!at||Date.now()-at>20000)load();if(follow)track()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){hiddenAt=Date.now();return}if(!at||Date.now()-at>20000)load();if(follow)track();if(Date.now()-hiddenAt>120000)autoSide()});
 setInterval(()=>{if(!document.hidden)load()},30000);
 setInterval(()=>{if(!document.hidden&&view==='trip'&&data)render()},10000);
+window.addEventListener('hashchange',checkImport); // delingslenke opna i ei fane som alt viser appen
 checkImport();
 go(cfg.trips.length?'trip':'setup');
 }

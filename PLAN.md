@@ -31,6 +31,7 @@ Observert, ikkje retta:
 
 ## 3. Forbetringar
 
+- [x] **Ferjesamband** (25.11.2026): éi reise av typen `{ferry:{a,b},dir}` i staden for to stader og to reiser. Kaiane på andre sida blir funne frå avgangane (`filters` med `transportMode: water`, `next`). Avgangane blir henta med same filter, så 60 avgangar dekkjer om lag eit døgn i staden for 2,5 timar på Halhjem. «Snu» byter side; «Vel kai etter kvar eg er» (lokal innstilling, ikkje i delingslenka) vel næraste kai ved opning og etter 2 min i bakgrunnen.
 - [x] **Følg bussen på kartet** (25.11.2026): Trykk på ei avgangsrad. Appen spør `realtime/v2/vehicles/graphql` med `vehicles(serviceJourneyId: …)` kvart 10. sekund medan kartet er ope, og stoppar når det blir lukka eller appen ligg i bakgrunnen. Testa mot ekte data: Skyss sender buss og ferje, men ikkje Bybanen, og ein tur får først posisjon når han har starta. Frå endestasjonar (Bergen busstasjon, ferjekaiar) er det difor sjeldan posisjon før avgang. Ein mogleg vidareføring er å følgje køyretøyet på turen før (krev `vehicleId`/blokk, som avgangane ikkje har).
 - [ ] **Linjefilter på serveren** (viktigast, sjå funn i steg 1): Når brukaren har sett linjer, slå opp line-ID-ar (`lines(publicCodes: […])` gir t.d. `SKY:Line:50E`) og bruk `estimatedCalls(filters: [{select: [{lines: […]}]}])`. `whiteListed` finst ikkje på `StopPlace.estimatedCalls` i v3. Utan filter kan `numberOfDeparturesPerLineAndDestinationDisplay` spreie avgangane over lengre tid.
 - [ ] **Overgangar**: I dag er berre direkte turar med. Vurder `trip(from, to)` for reiser med bytte.
