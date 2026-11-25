@@ -1,17 +1,26 @@
 # Plan for Neste
 
-Status 25.11.2026: v3 er skriven og testa med påfunne Entur-svar (`tests/mock_test.py`).
-**Ingenting er testa mot ekte Entur-data eller ekte kart enno.** Utviklingsmiljøet der v3 vart laga, kom ikkje ut til `api.entur.io`, cdnjs eller OpenStreetMap.
+Status 25.11.2026: v3 er testa med påfunne Entur-svar (`tests/mock_test.py`) **og mot ekte Entur-data, Leaflet og OSM-fliser** i Chromium, både frå `http://` og `file://`.
 
-## 1. Verifiser mot ekte data (gjer dette først)
+## 1. Verifiser mot ekte data ✓ (25.11.2026)
 
-- [ ] **CORS**: Godtek `api.entur.io` kall frå nettlesaren med headeren `ET-Client-Name` (preflight)? Test frå GitHub Pages-adressa og frå `file://`.
-- [ ] **Schema**: Finst `occupancyStatus` på `EstimatedCall` og `parent` på `StopPlace` i Journey Planner v3? Appen fell tilbake til eit enklare fragment viss ikkje (sjå `FRAG` i `index.html`), men ta bort det som ikkje finst.
-- [ ] **ID-matching**: Stopp frå geocoderen (`NSR:StopPlace:…`) må vere same ID som `quay.stopPlace.id` i `estimatedCalls`, eller som `parent.id`. Sjekk særleg terminalar med fleire transportmiddel (Bergen busstasjon `NSR:StopPlace:62356`).
-- [ ] **Ferjer**: Kjem ferjesamband (t.d. Halhjem–Sandvikvåg) med i `estimatedCalls`, og har begge kaiane same `serviceJourney`?
-- [ ] **Belegg**: Sender Skyss noko anna enn `noData`? Fjern stolpane om det aldri kjem data.
-- [ ] **Kart**: Lastar Leaflet frå cdnjs og fliser frå OSM? Gir `nearest(...)` stopp, og kva for format har `transportMode` (liste eller enkeltverdi)?
-- [ ] **Datamengd**: Kvart frå-stopp hentar 60 avgangar med alle vidare stopp. Mål responsstorleiken på ein travel terminal.
+- [x] **CORS**: Preflight er OK. Journey Planner og Geocoder svarar `Access-Control-Allow-Origin: *` og godtek `ET-Client-Name` og `Content-Type`. Fungerer både frå `http://`-opphav og `file://` (`Origin: null`).
+- [x] **Schema**: `occupancyStatus` (EstimatedCall) og `parent` (StopPlace) finst. Fallback-fragmenta er fjerna; appen brukar no éin spørjing (`CALL` i `index.html`).
+- [x] **ID-matching**: Geocoderen og `nearest` gir foreldre-ID (t.d. `NSR:StopPlace:62356`). I `estimatedCalls` står barne-stoppet (`30810`, `30865`, `62129` for Bergen busstasjon) med `parent.id` = 62356. `ids()` dekkjer begge.
+- [x] **Ferjer**: Halhjem–Sandvikvåg (linje 1018) kjem med, og kvar tur har begge kaiane under same `serviceJourney`. Ekspressbussane som køyrer med ferja (NW400, VY190, FX652) kjem òg med.
+- [x] **Belegg**: Behald stolpane. Vy-tog sender `manySeatsAvailable` på dei fleste avgangane; Skyss sender stort sett `noData`, men nokre gonger data.
+- [x] **Kart**: Leaflet 1.9.4 lastar frå cdnjs, og flisene frå OSM. `nearest` gir foreldre-stopp; `transportMode` er ei **liste** (t.d. `["tram","bus"]`).
+- [x] **Datamengd**: Bergen busstasjon, 60 avgangar: 306 kB rått / 26 kB gzip med den gamle spørjinga. Med `serviceJourneyEstimatedCalls.next` (berre stoppa etter avgangen) er det 219 kB / 14 kB. Ferjekaien Halhjem gjekk frå 18 kB til 9 kB gzip.
+
+Funne og retta under verifiseringa:
+- Ekspressbussar tek berre på passasjerar ut av byen (`forAlighting: false` heilt til Halhjem kai). Appen viste dei som alternativ til stopp der dei ikkje set av. No krev appen `forBoarding` på avgangsstoppet og `forAlighting` på målet.
+- Turar etter midnatt kunne få feil dato, sidan `serviceJourney.estimatedCalls` utan `date` gjeld i dag. `next` brukar datoen til avgangen.
+- Bergen busstasjon fekk trikkefarge (kategorien `onstreetTram`). Ny prioritering: tog, båt, bane, buss, trikk (`pickMode`).
+- Klokkeslett blir no viste i norsk tid (`Europe/Oslo`), uavhengig av tidssona til eininga.
+
+Observert, ikkje retta:
+- På Bergen busstasjon dekkjer 60 avgangar berre om lag 30 minutt. Med linjefilter (sjå steg 3) kan ei reise då vise få eller ingen avgangar. Dette er hovudgrunnen til å flytte filteret til serveren.
+- Ved likt framkomsttidspunkt (buss på ferja og sjølve ferja) avgjer rekkjefølgja i svaret kva som blir vist som raskast.
 
 ## 2. Publiser
 
@@ -22,7 +31,7 @@ Status 25.11.2026: v3 er skriven og testa med påfunne Entur-svar (`tests/mock_t
 
 ## 3. Forbetringar
 
-- [ ] **Linjefilter på serveren**: Når brukaren har sett linjer, slå opp line-ID-ar (`lines(publicCodes: …)`) og bruk `whiteListed: {lines: […]}` i staden for å hente 60 avgangar og filtrere lokalt.
+- [ ] **Linjefilter på serveren** (viktigast, sjå funn i steg 1): Når brukaren har sett linjer, slå opp line-ID-ar (`lines(publicCodes: […])` gir t.d. `SKY:Line:50E`) og bruk `estimatedCalls(filters: [{select: [{lines: […]}]}])`. `whiteListed` finst ikkje på `StopPlace.estimatedCalls` i v3. Utan filter kan `numberOfDeparturesPerLineAndDestinationDisplay` spreie avgangane over lengre tid.
 - [ ] **Overgangar**: I dag er berre direkte turar med. Vurder `trip(from, to)` for reiser med bytte.
 - [ ] **Avvik**: Vis `situations` (SIRI SX) på linja eller stoppet.
 - [ ] **Sortering av reiser**: Dra og slepp, eller ein «Gjer til standard»-knapp.

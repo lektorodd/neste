@@ -14,7 +14,7 @@ OUT = ROOT / "tests" / "out"; OUT.mkdir(parents=True, exist_ok=True)
 now = dt.datetime.now().astimezone()
 iso = lambda m: (now + dt.timedelta(minutes=m)).isoformat()
 
-A, B, HUB = "NSR:StopPlace:1001", "NSR:StopPlace:1002", "NSR:StopPlace:2001"
+A, B, HUB, HUB_KAI = "NSR:StopPlace:1001", "NSR:StopPlace:1002", "NSR:StopPlace:2001", "NSR:StopPlace:2002"
 GEO = {"Testvik": [(A, "Testvik øvre", "onstreetBus"), (B, "Testvik nedre", "onstreetBus")],
        "Sentrum": [(HUB, "Sentrum terminal", "busStation")]}
 
@@ -25,15 +25,15 @@ def geo(route):
          for k, v in GEO.items() if q.lower() in k.lower() for i, n, c in v]
     route.fulfill(status=200, content_type="application/json", body=json.dumps({"features": f}))
 
-def call(o, line, dep, arr, delay=0, occ="noData"):
-    sp = lambda i, n: {"id": i, "name": n, "parent": None}
-    return {"realtime": True, "cancellation": False, "aimedDepartureTime": iso(dep - delay),
+def call(o, line, dep, arr, delay=0, occ="noData", board=True, alight=True):
+    # Som hos Entur: stoppa vidare er barne-stopp (kai) med stoppet frå geocoderen som parent.
+    return {"realtime": True, "cancellation": False, "forBoarding": board, "aimedDepartureTime": iso(dep - delay),
             "expectedDepartureTime": iso(dep), "occupancyStatus": occ,
-            "destinationDisplay": {"frontText": "Sentrum"}, "quay": {"stopPlace": sp(o, "x")},
-            "serviceJourney": {"id": f"T:SJ:{line}{dep}", "line": {"publicCode": line, "transportMode": "bus"},
-                               "estimatedCalls": [
-                                   {"quay": {"stopPlace": sp(o, "x")}, "aimedArrivalTime": iso(dep), "expectedArrivalTime": iso(dep)},
-                                   {"quay": {"stopPlace": sp(HUB, "Sentrum terminal")}, "aimedArrivalTime": iso(arr), "expectedArrivalTime": iso(arr)}]}}
+            "destinationDisplay": {"frontText": "Sentrum"},
+            "serviceJourney": {"id": f"T:SJ:{line}{dep}", "line": {"publicCode": line, "transportMode": "bus"}},
+            "serviceJourneyEstimatedCalls": {"next": [
+                {"forAlighting": alight, "quay": {"stopPlace": {"id": HUB_KAI, "parent": {"id": HUB}}},
+                 "aimedArrivalTime": iso(arr), "expectedArrivalTime": iso(arr)}]}}
 
 def jp(route):
     q = json.loads(route.request.post_data)["query"]
@@ -44,8 +44,11 @@ def jp(route):
         sid = q.split(f'g{i}:stopPlace(id:"')[1].split('"')[0]
         mins = (3, 12, 25) if sid == A else (9, 24)
         line = "1" if sid == A else "1E"
-        d[f"g{i}"] = {"estimatedCalls": [call(sid, line, m, m + 19, delay=2 if m == 12 else 0,
-                                              occ="fewSeatsAvailable" if m == 12 else "noData") for m in mins]}
+        calls = [call(sid, line, m, m + 19, delay=2 if m == 12 else 0,
+                      occ="fewSeatsAvailable" if m == 12 else "noData") for m in mins]
+        if sid == A:  # skal ikkje visast: set ikkje av i Sentrum / tek ikkje på her
+            calls += [call(sid, "X9", 5, 20, alight=False), call(sid, "Y9", 6, 21, board=False)]
+        d[f"g{i}"] = {"estimatedCalls": calls}
     route.fulfill(status=200, content_type="application/json", body=json.dumps({"data": d}))
 
 with sync_playwright() as p:
@@ -72,7 +75,9 @@ with sync_playwright() as p:
     pg.click("[data-act=done]"); pg.wait_for_timeout(800)
     pg.screenshot(path=str(OUT / "trip.png"), full_page=True)
     assert pg.locator(".hero .big").count() == 1, "manglar hovudboks"
-    assert pg.locator(".row").count() >= 4, "for få rader"
+    assert pg.locator(".row").count() == 5, "feil tal på rader"
+    pills = pg.locator(".pill").all_inner_texts()
+    assert "X9" not in pills and "Y9" not in pills, "viste avgang utan på-/avstiging"
     b.close()
     print("Feil i sida:", errs or "ingen")
     assert not errs
