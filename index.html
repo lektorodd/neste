@@ -125,6 +125,9 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid 
 .sit{background:none;border-top:1px solid var(--line);padding:10px 0;color:var(--ink)}.sit:first-of-type{border-top:0}
 .avb>span:nth-child(2),.sit>span:nth-child(2){flex:1}.go{color:inherit;opacity:.6;font-weight:800}
 .sit .ln{display:inline-block;min-width:28px;padding:0 5px;margin-right:6px;border-radius:6px;border:1px solid var(--line);text-align:center;font-size:13px}
+.ord{display:grid;grid-template-columns:24px minmax(0,1fr) auto auto;gap:4px;align-items:center;border-top:1px solid var(--line);font-weight:600}.ord:first-of-type{border-top:0}
+.ord .num{color:var(--mute);font-variant-numeric:tabular-nums;font-size:14px}.ord span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.x:disabled{opacity:.25;cursor:default}
 .avb .wi,.sit .wi{margin:0}.sitx{margin:8px 0;white-space:pre-line}.dlg a{color:var(--bus)}
 footer{font-size:12px;color:var(--mute);text-align:center;margin-top:18px}
 @media(prefers-reduced-motion:reduce){.rt{animation:none}}
@@ -352,6 +355,10 @@ function setupView(){
   ${fer.length?`<label class="chk"><input type="checkbox" data-act="autoside"${ls.get('autoside',false)?' checked':''}> Vel kai etter kvar eg er</label>
   <p class="note">Appen samanliknar posisjonen din med dei to kaiane, berre på denne eininga. Posisjonen blir ikkje lagra og ikkje sendt nokon stad. Utan posisjon viser appen den sida du såg på sist.</p>`:''}
   <div class="btns"><button class="sec" type="button" data-act="ferry">+ Ferjesamband</button></div></section>
+ ${cfg.trips.length>1?`<section class="card" id="order"><h2>Rekkjefølgje <small>slik reisene står øvst</small></h2>
+  ${cfg.trips.map((t,i)=>`<div class="ord" data-trip="${esc(t.id)}"><span class="num">${i+1}</span><span>${esc(tripName(t))}</span>
+   <button class="x" type="button" data-act="tup" aria-label="Flytt ${esc(tripName(t))} opp"${i?'':' disabled'}>↑</button><button class="x" type="button" data-act="tdown" aria-label="Flytt ${esc(tripName(t))} ned"${i<cfg.trips.length-1?'':' disabled'}>↓</button></div>`).join('')}
+  <p class="note">Den første reisa opnar når appen ikkje har noko anna val, til dømes etter import.</p></section>`:''}
  <section class="card"><h2>Del med familien</h2>
   <p class="note">Lenka inneheld stadane, stoppa og reisene dine, men ikkje kvar stadene er. Opnar nokon lenka, kan dei importere oppsettet.</p>
   <div class="btns"><button class="cta" type="button" data-act="share">${navigator.share?'Del lenka':'Kopier delingslenke'}</button><button class="sec" type="button" data-act="paste">Opne delingslenke</button><button class="sec" type="button" data-act="reset">Nullstill</button></div></section>
@@ -654,6 +661,10 @@ document.addEventListener('click',async e=>{
   case'flip':{const f=cfg.trips.find(x=>x.id===cur);if(!f?.ferry)break;f.dir=f.dir==='ba'?'ab':'ba';autoBy='';save();data=null;err=null;render();load()}break;
   case'openMap':openMap(pid);break;
   case'tadd':cfg.trips.push({id:uid(),from:cfg.places[0].id,to:cfg.places[1].id,lines:''});re();break;
+  case'tup':case'tdown':{const i=cfg.trips.indexOf(t),j=i+(a==='tup'?-1:1);if(i<0||j<0||j>=cfg.trips.length)break;
+   [cfg.trips[i],cfg.trips[j]]=[cfg.trips[j],cfg.trips[i]];re();
+   // Behald fokus på same knapp, eller den andre når reisa har nådd toppen eller botnen.
+   const r=document.querySelector(`.ord[data-trip="${CSS.escape(t.id)}"]`);(r?.querySelector(`[data-act=${a}]:not(:disabled)`)||r?.querySelector('button:not(:disabled)'))?.focus()}break;
   case'tdel':cfg.trips=cfg.trips.filter(x=>x!==t);re();break;
   case'trev':cfg.trips.push({id:uid(),from:t.to,to:t.from,lines:t.lines});re();break;
   case'where':whereDialog(pid);break;

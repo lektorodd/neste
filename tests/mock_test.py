@@ -3,7 +3,7 @@
 Køyr:  pip install playwright && playwright install chromium
        python tests/mock_test.py
 Skjermbilete hamnar i tests/out/. Testen går gjennom oppsettet
-(søk, legg til stopp, ny stad, reise + retur), reisevisinga, linjefilteret, avvik,
+(søk, legg til stopp, ny stad, reise + retur), reisevisinga, linjefilteret, avvik, rekkjefølgja,
 følgjekartet (Leaflet frå cdnjs; blir hoppa over utan nett), kvar ein
 stad er (stopp i nærleiken med gangtid) og ferjesamband (snu kai, og kai vald etter påfunnen posisjon). Sjekkar òg
 manifest og ikon.
@@ -287,6 +287,28 @@ with sync_playwright() as p:
     assert hero.startswith("Frå Motkai til Testkai") and "posisjonen din" in hero, hero
     stored = pg.evaluate("JSON.stringify(Object.assign({}, localStorage))")
     assert "60.09" not in stored and "5.01" not in stored, "posisjonen vart lagra"
+
+    # Rekkjefølgje: opp/ned for alle reiser (vanlege og samband), og den første opnar utan lagra val
+    pg.click("#setup"); pg.wait_for_timeout(300)
+    order = lambda: [x.split("\n")[1] for x in pg.locator("#order .ord").all_inner_texts()]
+    assert order() == ["Heim → Sentrum", "Sentrum → Heim", "Testkai ⇄ Motkai"], order()
+    assert pg.locator("#order .ord").first.locator("[data-act=tup]").is_disabled()
+    assert pg.locator("#order .ord").last.locator("[data-act=tdown]").is_disabled()
+    pg.locator("#order .ord").last.locator("[data-act=tup]").click(); pg.wait_for_timeout(200)
+    assert pg.evaluate("document.activeElement.dataset.act") == "tup", "fokus skal bli verande på knappen"
+    pg.keyboard.press("Enter"); pg.wait_for_timeout(200)  # flytt han øvst med tastaturet
+    assert order() == ["Testkai ⇄ Motkai", "Heim → Sentrum", "Sentrum → Heim"], order()
+    assert pg.evaluate("document.activeElement.dataset.act") == "tdown", "øvst: fokus til ned-knappen"
+    pg.locator("#order .ord").nth(1).locator("[data-act=tdown]").click(); pg.wait_for_timeout(200)
+    assert order() == ["Testkai ⇄ Motkai", "Sentrum → Heim", "Heim → Sentrum"], order()
+    pg.screenshot(path=str(OUT / "order.png"), full_page=True)
+    pg.click("[data-act=done]"); pg.wait_for_timeout(300)
+    assert pg.locator("#chips button").all_inner_texts() == ["Testkai ⇄ Motkai", "Sentrum → Heim", "Heim → Sentrum"]
+    pg.locator("#chips button").nth(2).click(); pg.wait_for_timeout(300)
+    pg.reload(); pg.wait_for_timeout(500)
+    assert pg.locator("#chips [aria-pressed=true]").inner_text() == "Heim → Sentrum", "lagra val skal haldast"
+    pg.evaluate("localStorage.removeItem('neste.cur')"); pg.reload(); pg.wait_for_timeout(500)
+    assert pg.locator("#chips [aria-pressed=true]").inner_text() == "Testkai ⇄ Motkai", "den første skal opne utan lagra val"
 
     # Gamalt heimepunkt blir flytta til staden «Heim»
     pg.evaluate("() => { localStorage.setItem('neste.home', JSON.stringify({lat:60.2,lon:5.2})); localStorage.removeItem('neste.pts') }")
