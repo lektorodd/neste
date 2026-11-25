@@ -4,8 +4,8 @@ Køyr:  pip install playwright && playwright install chromium
        python tests/mock_test.py
 Skjermbilete hamnar i tests/out/. Testen går gjennom oppsettet
 (søk, legg til stopp, ny stad, reise + retur), reisevisinga,
-følgjekartet (Leaflet frå cdnjs; blir hoppa over utan nett) og
-ferjesamband (snu kai, og kai vald etter påfunnen posisjon).
+følgjekartet (Leaflet frå cdnjs; blir hoppa over utan nett), kvar ein
+stad er (stopp i nærleiken med gangtid) og ferjesamband (snu kai, og kai vald etter påfunnen posisjon).
 """
 import json, datetime as dt, pathlib
 from urllib.parse import urlparse, parse_qs
@@ -19,13 +19,21 @@ iso = lambda m: (now + dt.timedelta(minutes=m)).isoformat()
 A, B, HUB, HUB_KAI = "NSR:StopPlace:1001", "NSR:StopPlace:1002", "NSR:StopPlace:2001", "NSR:StopPlace:2002"
 GEO = {"Testvik": [(A, "Testvik øvre", "onstreetBus"), (B, "Testvik nedre", "onstreetBus")],
        "Sentrum": [(HUB, "Sentrum terminal", "busStation")],
-       "Testkai": [("NSR:StopPlace:3001", "Testkai ferjekai", "harbourPort")]}
+       "Testkai": [("NSR:StopPlace:3001", "Testkai ferjekai", "harbourPort")],
+       "Nordvik": [("NSR:StopPlace:1004", "Nordvik", "onstreetBus")]}
+# Påfunnen gangtid (sekund) og avstand (meter) frå det påfunne punktet "Testgata 1".
+WALK = {A: 240, B: 360, "NSR:StopPlace:1003": 545, "NSR:StopPlace:1004": 660}
+NEAR = [(A, "Testvik øvre", 200), (B, "Testvik nedre", 350), ("NSR:StopPlace:1003", "Testvik sør", 500)]
 # Påfunne ferjekaiar: barne-stopp 31xx med forelder 30xx, og kvar sin påfunne posisjon.
 KAI = {"NSR:StopPlace:3001": ("Testkai ferjekai", 60.0), "NSR:StopPlace:3002": ("Motkai ferjekai", 60.1)}
 queries = []
 
 def geo(route):
-    q = parse_qs(urlparse(route.request.url).query)["text"][0]
+    qs = parse_qs(urlparse(route.request.url).query); q = qs["text"][0]
+    if qs.get("layers") == ["address"]:
+        f = [{"geometry": {"coordinates": [5.0, 60.0]}, "properties": {"id": "T:Adr:1", "name": "Testgata 1",
+              "label": "Testgata 1, Testby", "category": ["vegadresse"]}}] if "testgata" in q.lower() else []
+        return route.fulfill(status=200, content_type="application/json", body=json.dumps({"features": f}))
     f = [{"geometry": {"coordinates": [5.3, 60.4]},
           "properties": {"id": i, "name": n, "label": n + ", Testby", "category": [c]}}
          for k, v in GEO.items() if q.lower() in k.lower() for i, n, c in v]
@@ -58,6 +66,12 @@ def jp(route):
     q = json.loads(route.request.post_data)["query"]
     queries.append(q)
     d = {}
+    if "nearest(" in q:
+        d["nearest"] = {"edges": [{"node": {"distance": m, "place": {"id": i, "name": n, "transportMode": ["bus"]}}} for i, n, m in NEAR]}
+    for i in range(30):
+        if f"w{i}:trip(" in q:
+            sid = q.split(f"w{i}:trip(")[1].split('place:"')[1].split('"')[0]
+            d[f"w{i}"] = {"tripPatterns": [{"duration": WALK[sid]}]}
     if "g0:" not in q and "stopPlace(id:" in q:  # oppslag av ferjesamband frå ein kai
         sid = q.split('stopPlace(id:"')[1].split('"')[0]
         d["stopPlace"] = {"name": KAI[sid][0], "latitude": KAI[sid][1], "longitude": 5.0,
@@ -140,6 +154,31 @@ with sync_playwright() as p:
         pg.click("[data-act=mapClose]"); pg.wait_for_timeout(200)
         assert pg.locator("#map.on").count() == 0
 
+    # Kvar er staden: søk adresse, få stopp i nærleiken med gangtid frå Entur
+    pg.click("#setup"); pg.wait_for_timeout(300)
+    heim = pg.locator("[data-place]").first
+    heim.locator("[data-act=where]").click(); pg.wait_for_timeout(200)
+    pg.locator("#dlg [data-act=search]").fill("Testgata"); pg.wait_for_timeout(600)
+    pg.locator("[data-act=wpick]").first.click(); pg.wait_for_timeout(800)
+    items = pg.locator("#dlg [data-act=ntog]")
+    assert items.count() == 3, "feil tal på stopp i nærleiken"
+    assert "4 min å gå" in items.nth(0).inner_text() and "10 min å gå" in items.nth(2).inner_text(), items.all_inner_texts()
+    assert items.nth(0).get_attribute("aria-pressed") == "true", "stopp som alt er lagt til skal vere merkte"
+    items.nth(2).click(); pg.wait_for_timeout(200)  # Testvik sør
+    assert items.nth(2).get_attribute("aria-pressed") == "true"
+    pg.click("[data-act=ndone]"); pg.wait_for_timeout(300)
+    assert "Ved Testgata 1" in heim.inner_text(), heim.inner_text()
+    walks = heim.locator("[data-act=walk]")
+    assert walks.count() == 3 and walks.nth(2).input_value() == "10", [walks.nth(i).input_value() for i in range(walks.count())]
+    # Stopp lagt til med vanleg søk får ekte gangtid når staden har eit punkt
+    heim.locator("[data-act=search]").fill("Nordvik"); pg.wait_for_timeout(600)
+    heim.locator("[data-act=pick]").first.click(); pg.wait_for_timeout(800)
+    assert heim.locator("[data-act=walk]").nth(3).input_value() == "11"
+    cfg = pg.evaluate("localStorage.getItem('neste.cfg')")
+    assert "Testgata" not in cfg and "60.0" not in cfg, "punktet skal ikkje liggje i oppsettet (delingslenka)"
+    assert "Testgata 1" in pg.evaluate("localStorage.getItem('neste.pts')")
+    pg.click("[data-act=done]"); pg.wait_for_timeout(500)
+
     # Ferjesamband: éi oppføring, ferjer frå kaien du er ved, og Snu
     pg.click("#setup"); pg.wait_for_timeout(300)
     pg.click("text=+ Ferjesamband"); pg.wait_for_timeout(200)
@@ -169,6 +208,14 @@ with sync_playwright() as p:
     assert hero.startswith("Frå Motkai til Testkai") and "posisjonen din" in hero, hero
     stored = pg.evaluate("JSON.stringify(Object.assign({}, localStorage))")
     assert "60.09" not in stored and "5.01" not in stored, "posisjonen vart lagra"
+
+    # Gamalt heimepunkt blir flytta til staden «Heim»
+    pg.evaluate("() => { localStorage.setItem('neste.home', JSON.stringify({lat:60.2,lon:5.2})); localStorage.removeItem('neste.pts') }")
+    pg.reload(); pg.wait_for_timeout(500)
+    heim_id = pg.evaluate("JSON.parse(localStorage.getItem('neste.cfg')).places.find(p=>p.name==='Heim').id")
+    moved = pg.evaluate("JSON.parse(localStorage.getItem('neste.pts'))")
+    assert moved.get(heim_id, {}).get("lat") == 60.2, moved
+    assert pg.evaluate("localStorage.getItem('neste.home')") is None
 
     # Delingslenke med eit samband blir importert og vaska
     import base64

@@ -38,11 +38,11 @@ Observert, ikkje retta:
 - [ ] **Avvik**: Vis `situations` (SIRI SX) på linja eller stoppet.
 - [ ] **Sortering av reiser**: Dra og slepp, eller ein «Gjer til standard»-knapp.
 - [ ] **QR-kode** for delingslenka, så familien kan skanne frå ein annan telefon.
-- [ ] **Gangtid**: La brukaren justere gangtid i kartet, og set eit fornuftig tak for forslaga frå heimepunktet.
+- [x] **Gangtid / kvar er staden** (25.11.2026): kvar stad kan ha eit punkt (søk i geocoderen med `layers=address`, som òg finn skular og andre POI-ar, eller vel på kartet). «Stopp i nærleiken» brukar `nearest` (1,5 km, 20 stopp) og gangtid frå `trip(... modes:{directMode:foot, transportModes:[]})`, 20 stopp på om lag 0,5 s. Punkta ligg i `localStorage` under `neste.pts`, ikkje i `cfg`, så dei er aldri i delingslenka. Det gamle heimepunktet blir flytta til staden «Heim».
 
 ## Prinsipp som skal halde
 
 - Inga adresse, inga heimeposisjon og ingen personlege stopp i repoet. Alt brukaroppsett ligg i `localStorage`.
-- Heimepunktet blir aldri med i delingslenka. Lenka brukar `#`-delen, så ingenting går via server.
+- Punkta for stadene (kvar heim og jobb er) blir aldri med i delingslenka. Lenka brukar `#`-delen, så ingenting går via server.
 - Éi fil (`index.html`) så lenge det går. Ingen byggesteg.
 - Ikkje Skyss-oransje. Eigen palett: lime signal (`--sig`), blå buss, grøn bane, sjøblå ferje.

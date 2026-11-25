@@ -51,6 +51,9 @@ main{display:grid;gap:12px}
 .chk{display:flex;gap:10px;align-items:center;margin-top:10px;font-size:14px}
 .chk input{width:22px;height:22px;flex:none;accent-color:var(--bus)}
 .res.inl{position:static;margin-top:8px;box-shadow:none}
+.res.near button{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center}
+.res.near .mk{font-size:20px;width:28px;text-align:center;color:var(--mute)}.near [aria-pressed=true] .mk{color:var(--tram)}
+.where{font-size:14px;color:var(--mute);margin:2px 0 4px}.where b{color:var(--ink);font-weight:600}
 .dlg .card{max-height:80vh;overflow:auto}
 .hero .big{font-size:clamp(48px,15vw,84px);font-weight:900;font-stretch:125%;line-height:.92;letter-spacing:-.03em;margin:6px 0 8px;font-variant-numeric:tabular-nums}
 .hero .big i{font-style:normal;font-size:.32em;letter-spacing:0;margin-left:6px}
@@ -125,7 +128,7 @@ footer{font-size:12px;color:var(--mute);text-align:center;margin-top:18px}
 <div id="map" aria-modal="true" role="dialog" aria-label="Kart">
  <div class="top"><span class="add">Legg til i</span><select class="add" id="mapPlace"></select><div class="fol" id="followHead"></div><button class="sec" type="button" data-act="mapClose">Ferdig</button></div>
  <div id="mapc"></div>
- <div class="bot"><button class="cta add" type="button" data-act="mapStops">Vis stopp her</button><button class="sec" type="button" data-act="mapLocate">Min posisjon</button><button class="sec add" type="button" data-act="mapHome">Set heimepunkt her</button>
+ <div class="bot"><button class="cta add" type="button" data-act="mapStops">Vis stopp her</button><button class="sec" type="button" data-act="mapLocate">Min posisjon</button><button class="sec add" type="button" data-act="mapHome">Staden er her</button>
   <p class="note" id="mapNote">Flytt kartet, trykk «Vis stopp her», og trykk på eit stopp for å leggje det til.</p></div>
 </div>
 <div id="dlg" class="dlg"></div>
@@ -145,7 +148,10 @@ const ls={get(k,d){try{const v=localStorage.getItem('neste.'+k);return v==null?d
 
 // ---------- tilstand (berre lokalt) ----------
 let cfg=ls.get('cfg',null)||{places:[{id:uid(),name:'Heim',stops:[]}],trips:[]};
-let homePt=ls.get('home',null); // {lat,lon} – blir aldri delt
+// Kvar stadene er: {placeId:{lat,lon,label}}. Berre lagra her, aldri i cfg og difor aldri i delingslenka.
+let pts=ls.get('pts',{});
+{const h=ls.get('home',null);if(h){const p=cfg.places.find(p=>/heim/i.test(p.name))||cfg.places[0];if(p&&!pts[p.id])pts[p.id]={lat:h.lat,lon:h.lon,label:'heimepunktet'};ls.set('pts',pts);try{localStorage.removeItem('neste.home')}catch(e){}}}
+const savePts=()=>ls.set('pts',pts);
 let cur=ls.get('cur',null),view='trip';
 let data=null,err=null,at=null,busy=false,shown=[],autoBy='';
 const save=()=>{ls.set('cfg',cfg)};
@@ -267,11 +273,12 @@ function setupView(){
  return`<section class="card"><h2>Stader <small>ein stad = stoppa du brukar der, med gangtid</small></h2></section>
  ${cfg.places.map(p=>`<section class="card" data-place="${esc(p.id)}">
   <div style="display:flex;gap:8px;align-items:center"><input class="name" value="${esc(p.name)}" data-act="pname" aria-label="Namn på stad"><button class="x" type="button" data-act="pdel" aria-label="Slett stad">×</button></div>
+  ${pts[p.id]?`<p class="where">Ved <b>${esc(pts[p.id].label)}</b> · gangtid blir rekna herfrå</p>`:''}
   ${p.stops.map((s,i)=>`<div class="stop" style="--c:${MODEC[s.mode]||'var(--mute)'}"><span class="dot"></span><div><div>${esc(s.name)}</div><small>${esc(s.label||'')}</small></div>
    <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--mute)"><input class="n" type="number" inputmode="numeric" min="0" max="60" value="${esc(s.walk)}" data-act="walk" data-i="${i}" aria-label="Gangtid i minutt"> min</label>
    <button class="x" type="button" data-act="sdel" data-i="${i}" aria-label="Fjern stopp">×</button></div>`).join('')||'<p class="empty">Ingen stopp enno.</p>'}
   <div class="srch"><input type="search" placeholder="Søk etter stopp, kai eller stasjon" data-act="search" autocomplete="off" enterkeyhint="search"><div class="res" hidden></div></div>
-  <div class="btns"><button class="sec" type="button" data-act="openMap">Finn på kart</button></div></section>`).join('')}
+  <div class="btns">${pts[p.id]?'<button class="sec" type="button" data-act="near">Stopp i nærleiken</button><button class="sec" type="button" data-act="where">Endre kvar</button>':'<button class="sec" type="button" data-act="where">Kvar er staden?</button>'}<button class="sec" type="button" data-act="openMap">Finn på kart</button></div></section>`).join('')}
  <div class="btns" style="margin:0"><button class="sec" type="button" data-act="padd">+ Ny stad</button></div>
  <section class="card"><h2>Reiser</h2>
   ${cfg.trips.filter(t=>!t.ferry).map(t=>`<div class="trip" data-trip="${esc(t.id)}"><select data-act="tfrom" aria-label="Frå">${opts(t.from)}</select><span class="arrow">→</span><select data-act="tto" aria-label="Til">${opts(t.to)}</select>
@@ -285,11 +292,8 @@ function setupView(){
   ${fer.length?`<label class="chk"><input type="checkbox" data-act="autoside"${ls.get('autoside',false)?' checked':''}> Vel kai etter kvar eg er</label>
   <p class="note">Appen samanliknar posisjonen din med dei to kaiane, berre på denne eininga. Posisjonen blir ikkje lagra og ikkje sendt nokon stad. Utan posisjon viser appen den sida du såg på sist.</p>`:''}
   <div class="btns"><button class="sec" type="button" data-act="ferry">+ Ferjesamband</button></div></section>
- <section class="card"><h2>Heimepunkt <small>valfritt</small></h2>
-  <p class="note">Set eit punkt på kartet, så føreslår appen gangtid når du legg til stopp. Punktet blir berre lagra her og er aldri med i delingslenka. ${homePt?'<b>Punktet er sett.</b>':''}</p>
-  <div class="btns">${homePt?'<button class="sec" type="button" data-act="homeDel">Fjern heimepunkt</button>':''}</div></section>
  <section class="card"><h2>Del med familien</h2>
-  <p class="note">Lenka inneheld stadane, stoppa og reisene dine, men ikkje heimepunktet. Opnar nokon lenka, kan dei importere oppsettet.</p>
+  <p class="note">Lenka inneheld stadane, stoppa og reisene dine, men ikkje kvar stadene er. Opnar nokon lenka, kan dei importere oppsettet.</p>
   <div class="btns"><button class="cta" type="button" data-act="share">Kopier delingslenke</button><button class="sec" type="button" data-act="reset">Nullstill</button></div></section>
  <div class="btns" style="margin:0 0 20px"><button class="cta" type="button" data-act="done">Ferdig</button></div>`;
 }
@@ -314,9 +318,10 @@ async function search(inp){
  const q=inp.value.trim(),box=inp.nextElementSibling,act=inp.dataset.pick||'pick';
  if(q.length<2){box.hidden=true;return}
  try{
-  const r=await fetch(`${GEO}?text=${encodeURIComponent(q)}&layers=venue&size=8&lang=no`,{headers:{'ET-Client-Name':CLIENT}});
+  const addr=inp.dataset.layers==='address'; // adresse, skule, arbeidsplass … i staden for stopp
+  const r=await fetch(`${GEO}?text=${encodeURIComponent(q)}&layers=${addr?'address':'venue'}&size=8&lang=no`,{headers:{'ET-Client-Name':CLIENT}});
   const j=await r.json();
-  const f=(j.features||[]).filter(x=>String(x.properties?.id||'').startsWith('NSR:StopPlace'));
+  const f=(j.features||[]).filter(x=>addr?x.geometry?.coordinates:String(x.properties?.id||'').startsWith('NSR:StopPlace'));
   box.innerHTML=f.length?f.map(x=>{const p=x.properties,[lon,lat]=x.geometry?.coordinates||[];
    return`<button type="button" data-act="${act}" data-id="${esc(p.id)}" data-name="${esc(p.name)}" data-label="${esc(p.label)}" data-lat="${esc(lat)}" data-lon="${esc(lon)}" data-mode="${esc(pickMode(p.category))}">${esc(p.name)}<small>${esc(p.label)}</small></button>`}).join(''):'<p class="empty" style="padding:10px 14px">Ingen treff.</p>';
   box.hidden=false;
@@ -327,10 +332,14 @@ function dist(la1,lo1,la2,lo2){ // meter, luftline
  const a=Math.sin(dl/2)**2+Math.cos(la1*toR)*Math.cos(la2*toR)*Math.sin(dn/2)**2;
  return 2*R*Math.asin(Math.sqrt(a));
 }
-function walkGuess(lat,lon){
- if(!homePt||lat==null)return 5;
- const m=dist(homePt.lat,homePt.lon,lat,lon)*1.3; // omveg-faktor
- return Math.max(1,Math.round(m/80));
+const lineWalk=(m)=>Math.max(1,Math.round(m*1.3/80)); // luftline × omveg, 80 m/min
+// Gangtid frå punktet til stoppa, rekna av Entur (til fots langs vegar). Minutt per stopp-ID; manglar om ruta feila.
+async function walkTimes(pt,ids){
+ if(!ids.length)return{};
+ const from=`{coordinates:{latitude:${(+pt.lat).toFixed(5)},longitude:${(+pt.lon).toFixed(5)}}}`;
+ const d=await gql('{'+ids.map((id,i)=>`w${i}:trip(from:${from},to:{place:${JSON.stringify(id)}},modes:{directMode:foot,transportModes:[]},numTripPatterns:1){tripPatterns{duration}}`).join(' ')+'}');
+ const out={};ids.forEach((id,i)=>{const s=d['w'+i]?.tripPatterns?.[0]?.duration;if(s!=null)out[id]=Math.max(1,Math.ceil(s/60))});
+ return out;
 }
 
 // ---------- ferjesamband ----------
@@ -386,11 +395,44 @@ function autoSide(){
 }
 function addStop(pid,s){
  const p=place(pid);if(!p||p.stops.some(x=>x.id===s.id))return;
- p.stops.push({id:s.id,name:s.name,label:s.label||'',mode:s.mode||'bus',walk:walkGuess(+s.lat,+s.lon)});save();
+ const pt=pts[pid],known=s.walk!=null&&s.walk!=='',ll=s.lat!=null&&s.lat!=='';
+ const st={id:s.id,name:s.name,label:s.label||'',mode:s.mode||'bus',walk:known?+s.walk:pt&&ll?lineWalk(dist(pt.lat,pt.lon,+s.lat,+s.lon)):5};
+ p.stops.push(st);save();
+ // Har staden eit punkt, hent ekte gangtid og oppdater feltet utan å teikne oppsettet på nytt.
+ if(pt&&!known)walkTimes(pt,[s.id]).then(m=>{
+  if(m[s.id]==null||!p.stops.includes(st))return;st.walk=m[s.id];save();
+  const el=document.querySelectorAll(`[data-place="${CSS.escape(pid)}"] [data-act=walk]`)[p.stops.indexOf(st)];if(el)el.value=st.walk;
+ }).catch(()=>{});
+}
+
+// ---------- kvar er staden ----------
+let near=[];
+function whereDialog(pid){
+ const p=place(pid);if(!p)return;
+ dialog(`<div data-place="${esc(pid)}"><h2>Kvar er ${esc(p.name)}?</h2>
+  <p class="note">Søk etter adresse, skule, arbeidsplass eller anna. Punktet blir berre lagra på denne eininga og er ikkje med i delingslenka. For å finne stopp og gangtid blir det sendt til Entur.</p>
+  <div class="srch"><input type="search" placeholder="Adresse eller stad" data-act="search" data-pick="wpick" data-layers="address" autocomplete="off" enterkeyhint="search"><div class="res inl" hidden></div></div>
+  <div class="btns"><button class="sec" type="button" data-act="wmap">Vel på kartet</button>${pts[pid]?'<button class="sec" type="button" data-act="wdel">Fjern punktet</button>':''}${closeBtn}</div></div>`);
+ $('#dlg input').focus();
+}
+async function nearDialog(pid){
+ const p=place(pid),pt=pts[pid];if(!p||!pt)return;
+ const head=`<h2>Stopp nær ${esc(pt.label)}</h2>`;
+ dialog(`<div data-place="${esc(pid)}">${head}<p class="note">Hentar stopp og gangtid …</p></div>`);
+ try{
+  const r=await post(`{nearest(latitude:${(+pt.lat).toFixed(5)},longitude:${(+pt.lon).toFixed(5)},maximumDistance:1500,maximumResults:20,filterByPlaceTypes:[stopPlace]){edges{node{distance place{...on StopPlace{id name transportMode}}}}}}`);
+  const list=(r.data?.nearest?.edges||[]).map(e=>e.node).filter(n=>n?.place?.id);
+  let w={};try{w=await walkTimes(pt,list.map(n=>n.place.id))}catch(e){}
+  near=list.map(n=>({id:n.place.id,name:n.place.name,mode:pickMode(n.place.transportMode),walk:w[n.place.id]??lineWalk(n.distance)})).sort((a,b)=>a.walk-b.walk);
+  dialog(`<div data-place="${esc(pid)}">${head}<p class="note">Gangtid i minutt${Object.keys(w).length?', rekna langs vegane':' (anslag)'}. Trykk for å leggje til eller ta bort.</p>
+   <div class="res inl near">${near.map((s,i)=>{const on=p.stops.some(x=>x.id===s.id);
+    return`<button type="button" data-act="ntog" data-i="${i}" aria-pressed="${on}" style="--c:${MODEC[s.mode]||'var(--bus)'}"><span class="dot"></span><span>${esc(s.name)}<small>${s.walk} min å gå</small></span><b class="mk">${on?'✓':'+'}</b></button>`}).join('')||'<p class="empty" style="padding:10px 14px">Ingen stopp innan 1,5 km.</p>'}</div>
+   <div class="btns"><button class="cta" type="button" data-act="ndone">Ferdig</button></div></div>`);
+ }catch(e){dialog(`<h2>Fekk ikkje henta stopp</h2><p class="note">${esc(e.message)}</p><div class="btns">${closeBtn}</div>`)}
 }
 
 // ---------- kart ----------
-let map=null,layer=null,homeMk=null;
+let map=null,layer=null,ptMk=null;
 function loadLeaflet(){
  return new Promise((ok,no)=>{
   if(window.L)return ok();
@@ -404,7 +446,8 @@ async function showMap(mode){
  const m=$('#map');m.dataset.mode=mode;m.classList.add('on');
  try{await loadLeaflet()}catch(e){$('#mapNote').textContent=e.message;return false}
  if(!map){
-  map=L.map('mapc',{zoomControl:false}).setView(homePt?[homePt.lat,homePt.lon]:[60.39,5.33],homePt?16:12);
+  const c=Object.values(pts)[0];
+  map=L.map('mapc',{zoomControl:false}).setView(c?[c.lat,c.lon]:[60.39,5.33],c?15:12);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
   layer=L.layerGroup().addTo(map);
  }
@@ -416,7 +459,8 @@ async function openMap(pid){
  $('#mapPlace').innerHTML=cfg.places.map(p=>`<option value="${esc(p.id)}"${p.id===pid?' selected':''}>${esc(p.name)}</option>`).join('');
  $('#mapNote').textContent='Flytt kartet, trykk «Vis stopp her», og trykk på eit stopp for å leggje det til.';
  if(!await showMap('add'))return;
- drawHome();
+ drawPt();
+ const c=pts[pid];if(c)map.setView([c.lat,c.lon],16);
 }
 
 // ---------- følg ein tur ----------
@@ -429,7 +473,7 @@ async function openFollow(r){
  $('#followHead').innerHTML=`<span class="pill" style="--c:${hex}">${esc(r.line)}</span><b>${esc(r.dest)}</b>`;
  $('#mapNote').textContent='Hentar posisjon …';
  if(!await showMap('follow'))return;
- if(homeMk){homeMk.remove();homeMk=null}
+ if(ptMk){ptMk.remove();ptMk=null}
  follow=r;fitted=false;
  const q=r.quay;
  if(q?.latitude!=null){
@@ -464,9 +508,10 @@ async function track(){
  }
  if(r===follow)ft=setTimeout(track,10000);
 }
-function drawHome(){
- if(!map)return;if(homeMk){homeMk.remove();homeMk=null}
- if(homePt)homeMk=L.circleMarker([homePt.lat,homePt.lon],{radius:9,color:'#0e1116',weight:3,fillColor:'#d7ff3b',fillOpacity:1}).addTo(map).bindTooltip('Heimepunkt');
+function drawPt(){ // punktet til staden som er vald i kartet
+ if(!map)return;if(ptMk){ptMk.remove();ptMk=null}
+ const p=place($('#mapPlace').value),c=p&&pts[p.id];
+ if(c)ptMk=L.circleMarker([c.lat,c.lon],{radius:9,color:'#0e1116',weight:3,fillColor:'#d7ff3b',fillOpacity:1}).addTo(map).bindTooltip(p.name);
 }
 async function mapStops(){
  const c=map.getCenter();$('#mapNote').textContent='Hentar stopp …';
@@ -517,7 +562,7 @@ document.addEventListener('click',async e=>{
   case'openSetup':go('setup');break;
   case'done':go('trip');break;
   case'padd':cfg.places.push({id:uid(),name:'Ny stad',stops:[]});re();break;
-  case'pdel':if(cfg.trips.some(x=>x.from===pid||x.to===pid)){dialog(`<h2>Staden er i bruk</h2><p class="note">Slett reisene som brukar «${esc(p.name)}» først.</p><div class="btns"><button class="sec" type="button" data-act="impNo">OK</button></div>`)}else{cfg.places=cfg.places.filter(x=>x.id!==pid);re()}break;
+  case'pdel':if(cfg.trips.some(x=>x.from===pid||x.to===pid)){dialog(`<h2>Staden er i bruk</h2><p class="note">Slett reisene som brukar «${esc(p.name)}» først.</p><div class="btns"><button class="sec" type="button" data-act="impNo">OK</button></div>`)}else{cfg.places=cfg.places.filter(x=>x.id!==pid);delete pts[pid];savePts();re()}break;
   case'sdel':p.stops.splice(+b.dataset.i,1);re();break;
   case'pick':addStop(pid,b.dataset);re();break;
   case'ferry':ferryDialog();break;
@@ -528,16 +573,23 @@ document.addEventListener('click',async e=>{
   case'tadd':cfg.trips.push({id:uid(),from:cfg.places[0].id,to:cfg.places[1].id,lines:''});re();break;
   case'tdel':cfg.trips=cfg.trips.filter(x=>x!==t);re();break;
   case'trev':cfg.trips.push({id:uid(),from:t.to,to:t.from,lines:t.lines});re();break;
-  case'homeDel':homePt=null;ls.set('home',null);re();break;
+  case'where':whereDialog(pid);break;
+  case'near':nearDialog(pid);break;
+  case'wpick':pts[pid]={lat:+b.dataset.lat,lon:+b.dataset.lon,label:b.dataset.name};savePts();nearDialog(pid);break;
+  case'wdel':delete pts[pid];savePts();$('#dlg').innerHTML='';renderSetup();break;
+  case'wmap':$('#dlg').innerHTML='';openMap(pid);break;
+  case'ntog':{const s=near[+b.dataset.i];if(!s||!p)break;const i=p.stops.findIndex(x=>x.id===s.id);
+   if(i>=0)p.stops.splice(i,1);else addStop(pid,s);save();const on=i<0;b.setAttribute('aria-pressed',on);b.querySelector('.mk').textContent=on?'✓':'+'}break;
+  case'ndone':$('#dlg').innerHTML='';renderSetup();break;
   case'share':try{await navigator.clipboard.writeText(shareLink());b.textContent='Kopiert ✓'}catch(x){dialog(`<h2>Kopier lenka</h2><input readonly value="${esc(shareLink())}" onfocus="this.select()"><div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div>`)}break;
-  case'reset':dialog('<h2>Nullstille alt?</h2><p class="note">Alle stader, reiser og heimepunktet blir sletta frå denne eininga.</p><div class="btns"><button class="cta" type="button" data-act="resetYes">Nullstill</button><button class="sec" type="button" data-act="impNo">Avbryt</button></div>');break;
-  case'resetYes':cfg={places:[{id:uid(),name:'Heim',stops:[]}],trips:[]};homePt=null;ls.set('home',null);save();$('#dlg').innerHTML='';renderSetup();break;
+  case'reset':dialog('<h2>Nullstille alt?</h2><p class="note">Alle stader, reiser og punkta for stadene blir sletta frå denne eininga.</p><div class="btns"><button class="cta" type="button" data-act="resetYes">Nullstill</button><button class="sec" type="button" data-act="impNo">Avbryt</button></div>');break;
+  case'resetYes':cfg={places:[{id:uid(),name:'Heim',stops:[]}],trips:[]};pts={};savePts();save();$('#dlg').innerHTML='';renderSetup();break;
   case'impYes':cfg=window._imp;save();$('#dlg').innerHTML='';cur=null;go('trip');break;
   case'impNo':$('#dlg').innerHTML='';break;
   case'mapClose':stopFollow();$('#map').classList.remove('on');if(view==='setup')renderSetup();break;
   case'mapStops':mapStops();break;
   case'mapLocate':try{navigator.geolocation.getCurrentPosition(x=>map.setView([x.coords.latitude,x.coords.longitude],16),()=>{$('#mapNote').textContent='Fekk ikkje posisjonen.'})}catch(x){}break;
-  case'mapHome':{const c=map.getCenter();homePt={lat:+c.lat.toFixed(5),lon:+c.lng.toFixed(5)};ls.set('home',homePt);drawHome();$('#mapNote').textContent='Heimepunkt sett (berre lagra her). Nye stopp får gangtid rekna frå det.'}break;
+  case'mapHome':{const c=map.getCenter(),id=$('#mapPlace').value;pts[id]={lat:+c.lat.toFixed(5),lon:+c.lng.toFixed(5),label:'punktet på kartet'};savePts();$('#map').classList.remove('on');nearDialog(id)}break;
  }
 });
 document.addEventListener('change',e=>{
@@ -556,6 +608,7 @@ document.addEventListener('change',e=>{
  }
 });
 document.addEventListener('input',e=>{if(e.target.dataset.act==='search'){clearTimeout(st);const i=e.target;st=setTimeout(()=>search(i),250)}});
+$('#mapPlace').addEventListener('change',drawPt);
 $('#setup').addEventListener('click',()=>go(view==='trip'?'setup':'trip'));
 $('#status').addEventListener('click',load);
 document.addEventListener('visibilitychange',()=>{if(document.hidden){hiddenAt=Date.now();return}if(!at||Date.now()-at>20000)load();if(follow)track();if(Date.now()-hiddenAt>120000)autoSide()});
