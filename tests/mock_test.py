@@ -3,7 +3,7 @@
 Køyr:  pip install playwright && playwright install chromium
        python tests/mock_test.py
 Skjermbilete hamnar i tests/out/. Testen går gjennom oppsettet
-(søk, legg til stopp, ny stad, reise + retur), reisevisinga, linjefilteret,
+(søk, legg til stopp, ny stad, reise + retur), reisevisinga, linjefilteret, avvik,
 følgjekartet (Leaflet frå cdnjs; blir hoppa over utan nett), kvar ein
 stad er (stopp i nærleiken med gangtid) og ferjesamband (snu kai, og kai vald etter påfunnen posisjon). Sjekkar òg
 manifest og ikon.
@@ -42,13 +42,21 @@ def geo(route):
          for k, v in GEO.items() if q.lower() in k.lower() for i, n, c in v]
     route.fulfill(status=200, content_type="application/json", body=json.dumps({"features": f}))
 
-def call(o, line, dep, arr, delay=0, occ="noData", board=True, alight=True):
+# Påfunne avvik (SIRI SX). Samandraget kjem med avgangen; heile teksten blir henta ved trykk.
+SIT = {"T:SituationNumber:1": [{"value": "Diversion", "language": "en"}, {"value": "Omkøyring forbi Testvik", "language": "no"}],
+       "T:SituationNumber:2": [{"value": "Heisen er ute av drift", "language": None}],
+       "T:SituationNumber:3": [{"value": "Omkøyring forbi Testvik", "language": "nn"}]}  # same samandrag, eige avvik
+SIT_FULL = {"T:SituationNumber:1": "Bussen køyrer ein annan veg på grunn av påfunne vegarbeid.",
+            "T:SituationNumber:2": "Bruk trappa.", "T:SituationNumber:3": "Same omkøyring."}
+
+def call(o, line, dep, arr, delay=0, occ="noData", board=True, alight=True, sit=()):
     # Som hos Entur: stoppa vidare er barne-stopp (kai) med stoppet frå geocoderen som parent.
     return {"realtime": True, "cancellation": False, "forBoarding": board, "quay": {"latitude": 60.0, "longitude": 5.0},
             "aimedDepartureTime": iso(dep - delay),
             "expectedDepartureTime": iso(dep), "occupancyStatus": occ,
             "destinationDisplay": {"frontText": "Sentrum"},
             "serviceJourney": {"id": f"T:SJ:{line}{dep}", "line": {"publicCode": line, "transportMode": "bus"}},
+            "situations": [{"situationNumber": n, "summary": SIT[n]} for n in sit],
             "serviceJourneyEstimatedCalls": {"next": [
                 {"forAlighting": alight, "quay": {"stopPlace": {"id": HUB_KAI, "parent": {"id": HUB}}},
                  "aimedArrivalTime": iso(arr), "expectedArrivalTime": iso(arr)}]}}
@@ -75,6 +83,12 @@ def jp(route):
         if f"w{i}:trip(" in q:
             sid = q.split(f"w{i}:trip(")[1].split('place:"')[1].split('"')[0]
             d[f"w{i}"] = {"tripPatterns": [{"duration": WALK[sid]}]}
+    if "situation(situationNumber:" in q:
+        n = q.split('situationNumber:"')[1].split('"')[0]
+        d["situation"] = {"description": [{"value": "Full text", "language": "en"}, {"value": SIT_FULL[n], "language": "nob"}],
+                          "advice": [], "infoLinks": [{"uri": "https://example.org/avvik", "label": "Meir om avviket"},
+                                                      {"uri": "javascript:alert(1)", "label": "farleg"}],
+                          "validityPeriods": [{"startTime": iso(-60), "endTime": iso(600)}]}
     for i in range(4):  # linjene ved eit stopp (til linjefilteret)
         if f"l{i}:stopPlace(" in q:
             sid = q.split(f'l{i}:stopPlace(id:"')[1].split('"')[0]
@@ -95,7 +109,8 @@ def jp(route):
         mins = (3, 12, 25) if sid == A else (9, 24)
         line = "1" if sid == A else "1E"
         calls = [call(sid, line, m, m + 19, delay=2 if m == 12 else 0,
-                      occ="fewSeatsAvailable" if m == 12 else "noData") for m in mins]
+                      occ="fewSeatsAvailable" if m == 12 else "noData",
+                      sit={9: ["T:SituationNumber:1"], 12: ["T:SituationNumber:2"], 24: ["T:SituationNumber:3"]}.get(m, [])) for m in mins]
         if sid == A:  # skal ikkje visast: set ikkje av i Sentrum / tek ikkje på her
             calls += [call(sid, "X9", 5, 20, alight=False), call(sid, "Y9", 6, 21, board=False)]
         if only is not None:  # som Entur: berre avgangar med desse line-ID-ane
@@ -162,6 +177,23 @@ with sync_playwright() as p:
     assert pg.locator(".row").count() == 5, "feil tal på rader"
     pills = pg.locator(".pill").all_inner_texts()
     assert "X9" not in pills and "Y9" not in pills, "viste avgang utan på-/avstiging"
+
+    # Avvik: samandrag på norsk i helten og på radene, éi oppføring per avvik, heile teksten ved trykk
+    assert "situations{situationNumber summary{value language}}" in queries[-1]
+    assert "description" not in queries[-1].split("situations{")[1], "heile teksten skal ikkje hentast med avgangane"
+    assert "Omkøyring forbi Testvik" in pg.locator(".hero .avb").inner_text(), pg.locator(".hero").inner_text()
+    assert pg.locator(".row .av").count() == 3
+    sit = pg.locator(".card .sit")
+    assert sit.count() == 2, sit.all_inner_texts()
+    assert "1E" in sit.nth(0).inner_text() and "Heisen er ute av drift" in sit.nth(1).inner_text()
+    sit.nth(0).click(); pg.wait_for_timeout(400)
+    dlg = pg.locator("#dlg").inner_text()
+    assert "påfunne vegarbeid" in dlg and "Full text" not in dlg and "Meir om avviket" in dlg and "farleg" not in dlg, dlg
+    assert "Gjeld til" in dlg
+    pg.screenshot(path=str(OUT / "avvik.png"))
+    n = len(queries); pg.click("#dlg [data-act=impNo]"); pg.locator(".hero .avb").click(); pg.wait_for_timeout(300)
+    assert len(queries) == n and "påfunne vegarbeid" in pg.locator("#dlg").inner_text(), "heile teksten skal liggje i minnet"
+    pg.click("#dlg [data-act=impNo]")
 
     # Følg ein tur på kartet (Leaflet frå cdnjs; fliser og posisjonar er påfunne)
     pg.locator(".row", has_text="1E").first.click(); pg.wait_for_timeout(2500)

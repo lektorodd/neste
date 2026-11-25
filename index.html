@@ -118,6 +118,14 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid 
 .bus-ic .pill{border:2px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,.45)}
 .leaflet-popup-content button{margin-top:6px;height:36px;border-radius:10px;border:0;background:#0e1116;color:#fff;padding:0 12px;font-weight:700}
 .dlg{position:fixed;inset:auto 12px calc(env(safe-area-inset-bottom) + 12px);z-index:200;max-width:520px;margin:0 auto}
+.wi{display:inline-grid;place-items:center;flex:none;width:16px;height:16px;border-radius:50%;background:var(--warn);color:#0e1116;font-size:11px;font-weight:900;margin-right:6px;vertical-align:-2px}
+.sub.av{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.avb,.sit{display:flex;gap:6px;align-items:center;width:100%;text-align:left;border:0;font-size:14px}
+.avb{margin-top:12px;background:rgba(14,17,22,.1);color:#0e1116;border-radius:12px;padding:9px 10px;font-weight:700}
+.sit{background:none;border-top:1px solid var(--line);padding:10px 0;color:var(--ink)}.sit:first-of-type{border-top:0}
+.avb>span:nth-child(2),.sit>span:nth-child(2){flex:1}.go{color:inherit;opacity:.6;font-weight:800}
+.sit .ln{display:inline-block;min-width:28px;padding:0 5px;margin-right:6px;border-radius:6px;border:1px solid var(--line);text-align:center;font-size:13px}
+.avb .wi,.sit .wi{margin:0}.sitx{margin:8px 0;white-space:pre-line}.dlg a{color:var(--bus)}
 footer{font-size:12px;color:var(--mute);text-align:center;margin-top:18px}
 @media(prefers-reduced-motion:reduce){.rt{animation:none}}
 </style>
@@ -177,7 +185,12 @@ async function post(q,url=JP){
 // Sjekka mot Journey Planner v3 25.11.2026. `next` er stoppa etter denne avgangen (rett dato, også over midnatt).
 // Stopp i svaret er barne-stopp (t.d. ein kai); `parent.id` er den ID-en geocoderen og nearest gir.
 const WATER='filters:[{select:[{transportModes:[{transportMode:water}]}]}]'; // berre ferjer og båtar
-const CALL='realtime cancellation forBoarding quay{latitude longitude} aimedDepartureTime expectedDepartureTime occupancyStatus destinationDisplay{frontText} serviceJourney{id line{publicCode transportMode}} serviceJourneyEstimatedCalls{next{forAlighting quay{stopPlace{id parent{id}}} aimedArrivalTime expectedArrivalTime}}';
+const CALL='realtime cancellation forBoarding quay{latitude longitude} aimedDepartureTime expectedDepartureTime occupancyStatus destinationDisplay{frontText} serviceJourney{id line{publicCode transportMode}} serviceJourneyEstimatedCalls{next{forAlighting quay{stopPlace{id parent{id}}} aimedArrivalTime expectedArrivalTime}} situations{situationNumber summary{value language}}';
+// Avvik (SIRI SX): avgangane har berre samandraget med (Bergen busstasjon +2 % gzip, Oslo S +13 %). Heile teksten blir henta ved trykk.
+// Entur gir berre avvik som gjeld på avgangstida, så validityPeriods trengst ikkje her.
+const LANG=['nn','no','nob','nb',null,'','en'];
+const pickLang=a=>{const v=(a||[]).filter(x=>x?.value?.trim());const r=LANG.map(l=>v.find(x=>(x.language??null)===l)).find(Boolean)||v[0];return r?r.value.trim():''};
+const sits=new Map(); // situationNumber -> {sum, full}
 async function gql(q){
  const r=await post(q);
  if(!r.data)throw new Error(r.errors?.[0]?.message||'Tomt svar');
@@ -243,7 +256,8 @@ function build(t,A,B,d){
    if(!best)continue;
    const dep=new Date(c.expectedDepartureTime),aim=new Date(c.aimedDepartureTime);
    const r={line:line||'–',mode:sj.line?.transportMode||'bus',dest:c.destinationDisplay?.frontText||'',dep,delay:Math.round((dep-aim)/60000),
-    rt:c.realtime,cancel:c.cancellation,occ:c.occupancyStatus,from:s,walk:+s.walk||0,sj:sj.id,quay:c.quay,...best};
+    rt:c.realtime,cancel:c.cancellation,occ:c.occupancyStatus,from:s,walk:+s.walk||0,sj:sj.id,quay:c.quay,...best,
+    sit:(c.situations||[]).map(x=>{const n=x.situationNumber,sum=pickLang(x.summary);if(n&&sum&&!sits.has(n))sits.set(n,{sum});return sum&&n}).filter(Boolean)};
    // Same tur frå to av stoppa dine: behald det med mest slakk.
    const k=sj.id+'|'+aim.toISOString().slice(0,10),prev=out.get(k);
    if(!prev||(+r.dep-r.walk*60000)>(+prev.dep-prev.walk*60000))out.set(k,r);
@@ -276,17 +290,40 @@ function tripView(){
  if(best){
   const go=best.walk?(best.leave===0?'Gå no':'Gå om '+best.leave+'<i>min</i>'):(best.leave===0?'Går no':'Går om '+best.leave+'<i>min</i>');
   h+=`<section class="hero" aria-live="polite"><div class="k"><span>${kk}</span>${flip}</div><div class="big">${go}</div>
-   <div class="s"><b>${esc(best.line)}</b> frå ${esc(best.from.name)} kl. ${esc(hm(best.dep))} · framme <b>${esc(hm(best.door))}</b></div></section>`;
+   <div class="s"><b>${esc(best.line)}</b> frå ${esc(best.from.name)} kl. ${esc(hm(best.dep))} · framme <b>${esc(hm(best.door))}</b></div>${best.sit.length?sitBtn(best.sit[0],'avb'):''}</section>`;
  }else h+=`<section class="hero none"><div class="k"><span>${t.ferry?kk+' · ':''}Ingen avgangar du rekk det neste døgeret.</span>${flip}</div></section>`;
  h+=`<section class="card"><h2>Sortert etter når du er framme <small>${esc(tripName(t))}</small></h2>${list.length?list.map((r,i)=>{
   const c=MODEC[r.mode]||'var(--bus)',miss=r.leave<0&&!r.cancel;
   return`<button type="button" data-row="${i}" class="row ${r===best?'best':''} ${miss?'miss':''} ${r.cancel?'cancel':''}" style="--c:${c}" aria-label="Vis ${esc(r.line)} til ${esc(r.dest)} på kartet">
    <span class="pill">${esc(r.line)}</span>
    <div><div class="dest">${esc(r.cancel?'Innstilt – '+r.dest:r.dest)}</div>
-    <div class="sub">${r.rt?'<span class="rt"></span>':''}${esc(r.from.name)} → ${esc(r.to.name)} · framme ${esc(hm(r.door))}${miss?' · rekk han ikkje':''}${occ(r.occ)}</div></div>
+    <div class="sub">${r.rt?'<span class="rt"></span>':''}${esc(r.from.name)} → ${esc(r.to.name)} · framme ${esc(hm(r.door))}${miss?' · rekk han ikkje':''}${occ(r.occ)}</div>${r.sit.length?`<div class="sub av"><span class="wi" aria-hidden="true">!</span>${esc(sits.get(r.sit[0]).sum)}</div>`:''}</div>
    <div class="when"><div class="min">${minHTML(mins(r.dep),r.dep)}</div><div class="clock">${esc(hm(r.dep))} ${r.delay>=2?`<span class="late">+${r.delay}</span>`:''}</div></div></button>`;
  }).join('')+'<p class="note">Trykk på ein avgang for å sjå kvar han er no.</p>':`<div class="empty">${data.noLines?`Fann ikkje linje ${esc(tripLines(t).join(', '))} ved stoppa i ${esc(A.name)}.`:'Fann ingen avgangar mellom desse stadane.'}</div>`}</section>`;
+ // Alle avvik på avgangane i lista, med linjene dei gjeld. Trykk for heile teksten. Vy lagar eitt avvik per avgang
+ // («Færre vogner»), så like samandrag blir slegne saman og viser teksten til det første.
+ const av=new Map();for(const r of list)for(const n of r.sit){const k=sits.get(n).sum,o=av.get(k)||{n,l:new Set()};o.l.add(r.line);av.set(k,o)}
+ if(av.size)h+=`<section class="card"><h2>Avvik <small>trykk for heile meldinga</small></h2>${[...av.values()].map(o=>sitBtn(o.n,'sit',[...o.l])).join('')}</section>`;
  return h;
+}
+
+function sitBtn(n,cls,lines){
+ const s=sits.get(n);if(!s)return'';
+ return`<button type="button" class="${cls}" data-act="sit" data-n="${esc(n)}"><span class="wi" aria-hidden="true">!</span><span>${lines?lines.map(l=>`<b class="ln">${esc(l)}</b>`).join(''):''}${esc(s.sum)}</span><span class="go" aria-hidden="true">›</span></button>`;
+}
+async function sitDialog(n){
+ const s=sits.get(n);if(!s)return;
+ const show=()=>dialog(`<div data-sit="${esc(n)}"><h2>${esc(s.sum)}</h2>${s.full==null?'<p class="note">Hentar meldinga …</p>':s.full}<div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div></div>`);
+ show();if(s.full!=null)return;
+ try{
+  const d=(await gql(`{situation(situationNumber:${JSON.stringify(n)}){description{value language} advice{value language} infoLinks{uri label} validityPeriods{endTime}}}`)).situation;
+  const desc=pickLang(d?.description),adv=pickLang(d?.advice),end=d?.validityPeriods?.map(v=>v.endTime).filter(Boolean).sort().pop();
+  const links=(d?.infoLinks||[]).filter(l=>/^https?:\/\//i.test(l.uri||''));
+  s.full=(desc&&desc!==s.sum?`<p class="sitx">${esc(desc)}</p>`:'')+(adv&&adv!==desc?`<p class="sitx">${esc(adv)}</p>`:'')
+   +links.map(l=>`<p class="note"><a href="${esc(l.uri)}" target="_blank" rel="noopener">${esc(l.label||l.uri)}</a></p>`).join('')
+   +(end?`<p class="note">Gjeld til ${esc(new Date(end).toLocaleString('nb-NO',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',timeZone:'Europe/Oslo'}))}.</p>`:'');
+ }catch(e){s.full=null;if($('#dlg [data-sit]')?.dataset.sit===n)dialog(`<h2>${esc(s.sum)}</h2><p class="note">Fekk ikkje henta heile meldinga: ${esc(e.message)}</p><div class="btns">${closeBtn}</div>`);return}
+ if($('#dlg [data-sit]')?.dataset.sit===n)show(); // berre om dialogen for dette avviket framleis er open
 }
 
 // ---------- oppsett ----------
@@ -613,6 +650,7 @@ document.addEventListener('click',async e=>{
   case'ferry':ferryDialog();break;
   case'fpick':ferryFrom(b.dataset);break;
   case'froute':ferryMake(fTo[+b.dataset.i]);break;
+  case'sit':sitDialog(b.dataset.n);break;
   case'flip':{const f=cfg.trips.find(x=>x.id===cur);if(!f?.ferry)break;f.dir=f.dir==='ba'?'ab':'ba';autoBy='';save();data=null;err=null;render();load()}break;
   case'openMap':openMap(pid);break;
   case'tadd':cfg.trips.push({id:uid(),from:cfg.places[0].id,to:cfg.places[1].id,lines:''});re();break;

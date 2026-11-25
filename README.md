@@ -6,6 +6,7 @@ Superenkel avgangsapp for kollektivtrafikk i heile Noreg, bygd på opne data fr�
 - **Reiser**: frå ein stad til ein annan. Appen samanliknar alle avgangar frå stoppa dine og sorterer etter når du er framme dør til dør.
   Vil du berre ha nokre linjer (t.d. «40, 40E»), hentar appen berre avgangane for dei, så lista held i mange timar også på store terminalar.
 - **Ferjesamband**: éi oppføring for begge retningar (t.d. «A ⇄ B»). Søk opp kaien og vel kaien på andre sida, så viser appen berre ferjer frå kaien du er ved. «Snu» byter side. Vil du, kan appen velje kai etter posisjonen din. Posisjonen blir då berre samanlikna med kaiane på eininga di og verken lagra eller sendt.
+- **Avvik**: meldingar frå trafikkselskapa (innstilt, omkøyring, færre vogner …) står på avgangane dei gjeld. Trykk på meldinga under lista for heile teksten.
 - **Følg bussen**: trykk på ein avgang, så viser kartet kvar bussen eller båten er no, med forseinking. Posisjonane kjem frå Entur sitt sanntids-API for køyretøy. Ikkje alle sender (til dømes Bybanen), og mange sender først når turen har starta.
 - **Søk og kart**: finn stopp med søk (Entur Geocoder) eller på kartet (OpenStreetMap / Leaflet).
 - **Del med familien**: delingslenka inneheld stader, stopp og reiser i `#`-delen av adressa, som aldri blir sendt til nokon server.
