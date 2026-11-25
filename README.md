@@ -17,7 +17,7 @@ Appen sender stopp-ID-ar til Entur for å hente avgangar (og ID-en til turen du 
 
 ## Køyre
 
-Appen ligg på **https://lektorodd.github.io/neste/**. Opne adressa på telefonen og vel «Legg til på Heim-skjerm».
+Appen ligg på **https://lektorodd.github.io/neste/**. Opne adressa på telefonen og vel «Legg til på Heim-skjerm» (iPhone) eller «Installer app» (Android). Appen opnar då i eige vindauge utan adresselinje.
 
 Éi fil: `index.html`. Ho kan òg liggje på Cloudflare Pages eller ein annan statisk vert. `.nojekyll` gjer at GitHub Pages serverer filene som dei er.
 

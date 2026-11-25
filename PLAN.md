@@ -25,7 +25,7 @@ Observert, ikkje retta:
 ## 2. Publiser
 
 - [ ] Slå på GitHub Pages (main, rot): Settings → Pages → «Deploy from a branch», `main`, `/ (root)`. Adresse: https://lektorodd.github.io/neste/. `.nojekyll` er lagt til.
-- [ ] Legg til `manifest.webmanifest` og ikon (192/512) så «Legg til på Heim-skjerm» blir fin på Android òg.
+- [x] Manifest og ikon (25.11.2026): `manifest.webmanifest` (`standalone`, mørk tema), logo «nedteljing» i `ikon/neste.svg`, PNG i 180 (iOS), 192/512 og maskable 512, og `favicon.ico` (16/32/48). Chrome melder ingen hinder for installering. PNG-ane er rendra frå SVG-en; teikn dei på nytt om logoen blir endra.
 - [ ] Vurder service worker berre for app-skalet (ikkje for avgangsdata).
 - [x] Lisens: MIT, `LICENSE` lagt til (25.11.2026).
 
