@@ -3,7 +3,8 @@
 Køyr:  pip install playwright && playwright install chromium
        python tests/mock_test.py
 Skjermbilete hamnar i tests/out/. Testen går gjennom oppsettet
-(søk, legg til stopp, ny stad, reise + retur), reisevisinga, linjefilteret, avvik, rekkjefølgja, QR-koden, overgangar,
+(søk, legg til stopp, ny stad, reise + retur), reisevisinga, linjefilteret, avvik, rekkjefølgja, QR-koden, overgangar (blanda med direkte avgangar,
+minste bytetid, linjefilter på første tur, mellomlagring),
 følgjekartet (Leaflet frå cdnjs; blir hoppa over utan nett), kvar ein
 stad er (stopp i nærleiken med gangtid) og ferjesamband (snu kai, og kai vald etter påfunnen posisjon). Sjekkar òg
 manifest og ikon.
@@ -75,25 +76,43 @@ def ferry_call(sid, line, dep, mode="water"):
 
 FJERN = "NSR:StopPlace:4001"  # påfunnen stad utan direkte avgang frå Testvik
 
-def leg(line, dep, arr, frm, to, sj=None, aimed=None, sit=()):
+def leg(line, dep, arr, frm, to, sj=None, aimed=None, sit=(), fsp=None, tsp=None, seated=False):
+    """Ein etappe i trip-svaret. fsp/tsp: påfunne stoppestader (til minste bytetid), seated: bli sitjande (ikkje bytte)."""
     if line is None:
         return {"mode": "foot", "line": None, "aimedStartTime": iso(dep), "expectedStartTime": iso(dep), "expectedEndTime": iso(arr),
                 "fromPlace": {"name": frm, "quay": None}, "toPlace": {"name": to}}
     return {"mode": "bus", "aimedStartTime": iso(aimed if aimed is not None else dep), "expectedStartTime": iso(dep), "expectedEndTime": iso(arr),
-            "realtime": True, "fromPlace": {"name": frm, "quay": {"latitude": 60.0, "longitude": 5.0}}, "toPlace": {"name": to},
+            "realtime": True, "fromPlace": {"name": frm, "quay": {"latitude": 60.0, "longitude": 5.0, "stopPlace": {"id": fsp} if fsp else None}},
+            "toPlace": {"name": to, "quay": {"stopPlace": {"id": tsp} if tsp else None}},
             "line": {"publicCode": line, "transportMode": "bus"}, "serviceJourney": {"id": sj or f"T:SJ:{line}-{dep}"},
             "fromEstimatedCall": {"destinationDisplay": {"frontText": "Sentrum" if line != "7" else "Fjernby"}, "cancellation": False},
-            "situations": [{"situationNumber": n, "summary": SIT[n]} for n in sit]}
+            "situations": [{"situationNumber": n, "summary": SIT[n]} for n in sit],
+            "interchangeTo": {"staySeated": True} if seated else None}
 
 def trips(frm):
     """Påfunne reiser med bytte i Sentrum. Berre den første typen (eitt bytte, utan gange først/sist) skal visast."""
-    first = ("1", 10, 25, "Testvik øvre") if frm == A else ("1E", 14, 27, "Testvik nedre")
+    first = ("1", 10, 25, "Testvik øvre") if frm == A else ("1E", 14, 25, "Testvik nedre")
     ok = [leg(first[0], first[1], first[2], first[3], "Sentrum terminal", aimed=first[1] - 1),
           leg(None, first[2], first[2] + 3, "Sentrum terminal", "Sentrum torg"),
           leg("7", 31, 50, "Sentrum torg", "Fjernby", sj="T:SJ:7-31", sit=["T:SituationNumber:2"])]
     walk_first = [leg(None, 0, 4, first[3], "Anna stopp")] + ok
     two = [ok[0], leg("2", 27, 29, "Sentrum terminal", "Sentrum torg"), ok[2]]
     return [{"legs": ok}, {"legs": walk_first}, {"legs": two}]
+
+MID, MID_AUST = "T:SP:Midtvegen", "T:SP:Midtvegen-aust"  # påfunne stoppestader for bytte
+MIX = {"on": False}  # bytte til Sentrum, blanda med dei direkte avgangane
+
+def trips_mix():
+    """Påfunne reiser med bytte frå Testvik øvre til Sentrum, når det òg finst direkte avgangar."""
+    s = lambda line, dep, arr, frm="Midtvegen", **k: leg(line, dep, arr, frm, "Sentrum terminal", fsp=MID if frm == "Midtvegen" else MID_AUST, **k)
+    first = lambda sj="T:SJ:3-8", dep=8, arr=15, **k: leg("3", dep, arr, "Testvik øvre", "Midtvegen", sj=sj, tsp=MID, **k)
+    return [{"legs": [first(), s("4", 18, 26)]},                                   # 3 min på same stoppestad: ok
+            {"legs": [first(), s("5", 17, 24)]},                                   # 2 min: for kort
+            {"legs": [first(), leg(None, 15, 16, "Midtvegen", "Midtvegen aust"), s("6", 19, 25, "Midtvegen aust")]},  # 4 min med 1 min gange: under 5
+            {"legs": [first(), leg(None, 15, 17, "Midtvegen", "Midtvegen aust"), s("6", 21, 27, "Midtvegen aust")]},  # 6 min med 2 min gange: ok
+            {"legs": [first(seated=True), s("3B", 15, 22)]},                       # blir sitjande: ikkje eit bytte
+            {"legs": [first(sj="T:SJ:112", dep=12, arr=14), s("8", 18, 23)]},      # bussen går sjølv til Sentrum
+            {"legs": [first(sj="T:SJ:9-6", dep=6, arr=12), s("10", 16, 34)]}]     # dominert av linje 1 kl. +12
 
 def jp(route):
     q = json.loads(route.request.post_data)["query"]
@@ -115,7 +134,7 @@ def jp(route):
         if f"x{k}:trip(" in q:
             seg = q.split(f"x{k}:trip(")[1]
             frm, to = seg.split('place:"')[1].split('"')[0], seg.split('place:"')[2].split('"')[0]
-            d[f"x{k}"] = {"tripPatterns": trips(frm) if to == FJERN else []}
+            d[f"x{k}"] = {"tripPatterns": trips(frm) if to == FJERN else trips_mix() if to == HUB and frm == A and MIX["on"] else []}
     for i in range(4):  # linjene ved eit stopp (til linjefilteret)
         if f"l{i}:stopPlace(" in q:
             sid = q.split(f'l{i}:stopPlace(id:"')[1].split('"')[0]
@@ -186,6 +205,7 @@ with sync_playwright() as p:
     pg.route("**/realtime/v2/vehicles/**", veh)
     pg.route("**/tile.openstreetmap.org/**", lambda r: r.fulfill(status=200, content_type="image/png", body=PNG))
     pg.goto((ROOT / "index.html").as_uri()); pg.wait_for_timeout(400)
+    dq = lambda: next(x for x in reversed(queries) if "estimatedCalls(numberOfDepartures" in x and ":stopPlace(" in x)  # siste avgangsspørjing
 
     def pick(card, text, n):
         s = pg.locator("[data-act=search]").nth(card); s.fill(text); pg.wait_for_timeout(600)
@@ -202,12 +222,14 @@ with sync_playwright() as p:
     pg.screenshot(path=str(OUT / "trip.png"), full_page=True)
     assert pg.locator(".hero .big").count() == 1, "manglar hovudboks"
     assert pg.locator(".row").count() == 5, "feil tal på rader"
+    xq = [x for x in queries if "x0:trip(" in x]
+    assert xq and "transferSlack:180" in xq[-1] and "numTripPatterns:5" in xq[-1], "bytte-søket skal køyrast også når det finst direkte avgangar"
     pills = pg.locator(".pill").all_inner_texts()
     assert "X9" not in pills and "Y9" not in pills, "viste avgang utan på-/avstiging"
 
     # Avvik: samandrag på norsk i helten og på radene, éi oppføring per avvik, heile teksten ved trykk
-    assert "situations{situationNumber summary{value language}}" in queries[-1]
-    assert "description" not in queries[-1].split("situations{")[1], "heile teksten skal ikkje hentast med avgangane"
+    assert "situations{situationNumber summary{value language}}" in dq()
+    assert "description" not in dq().split("situations{")[1], "heile teksten skal ikkje hentast med avgangane"
     assert "Omkøyring forbi Testvik" in pg.locator(".hero .avb").inner_text(), pg.locator(".hero").inner_text()
     assert pg.locator(".row .av").count() == 3
     sit = pg.locator(".card .sit")
@@ -246,7 +268,7 @@ with sync_playwright() as p:
     lf = pg.locator(".trip [data-act=tlines]").first
     lf.fill("1e"); lf.dispatch_event("change"); pg.click("[data-act=done]"); pg.wait_for_timeout(800)
     assert any("l0:stopPlace(" in x and "quays{lines{id publicCode}}" in x for x in queries), "slo ikkje opp linjene"
-    q = queries[-1]
+    q = dq()
     assert 'lines:["T:Line:1E"]' in q and "g1:" in q and "g0:" not in q, q
     assert pg.locator(".row .pill").all_inner_texts() == ["1E", "1E"], pg.locator(".row .pill").all_inner_texts()
     n = len(queries); pg.click("#status"); pg.wait_for_timeout(500)
@@ -258,7 +280,7 @@ with sync_playwright() as p:
     pg.click("#setup"); pg.wait_for_timeout(300)
     lf = pg.locator(".trip [data-act=tlines]").first
     lf.fill(""); lf.dispatch_event("change"); pg.click("[data-act=done]"); pg.wait_for_timeout(800)
-    assert pg.locator(".row").count() == 5 and "filters" not in queries[-1]
+    assert pg.locator(".row").count() == 5 and "filters" not in dq()
 
     # Kvar er staden: søk adresse, få stopp i nærleiken med gangtid frå Entur
     pg.click("#setup"); pg.wait_for_timeout(300)
@@ -295,13 +317,13 @@ with sync_playwright() as p:
     assert pg.locator("#chips [aria-pressed=true]").inner_text() == "Testkai ⇄ Motkai"
     hero = pg.locator(".hero .k").inner_text()
     assert hero.startswith("Frå Testkai til Motkai"), hero
-    assert "transportMode:water" in queries[-1], "ferjefilteret vart ikkje sendt"
+    assert "transportMode:water" in dq(), "ferjefilteret vart ikkje sendt"
     pills = pg.locator(".row .pill").all_inner_texts()
     assert pills == ["F1", "F1"], f"skulle berre vise ferjer: {pills}"
     pg.screenshot(path=str(OUT / "ferry.png"), full_page=True)
     pg.click("[data-act=flip]"); pg.wait_for_timeout(600)
     assert pg.locator(".hero .k").inner_text().startswith("Frå Motkai til Testkai")
-    assert 'g0:stopPlace(id:"NSR:StopPlace:3002")' in queries[-1]
+    assert 'g0:stopPlace(id:"NSR:StopPlace:3002")' in dq()
     pg.click("[data-act=flip]"); pg.wait_for_timeout(600)
     assert pg.locator(".hero .k").inner_text().startswith("Frå Testkai")
 
@@ -370,9 +392,35 @@ with sync_playwright() as p:
     if "lasta ikkje" not in pg.locator("#mapNote").inner_text():
         assert "Testvik øvre" in pg.locator("#mapNote").inner_text()
         pg.click("[data-act=mapClose]"); pg.wait_for_timeout(200)
+    # Linjefilteret gjeld berre første tur: 1 → 7 blir vist, 1E → 7 ikkje
     n = len(queries); pg.locator("#chips button", has_text="Heim → Fjernby").nth(1).click(); pg.wait_for_timeout(800)
-    assert not any("trip(" in x for x in queries[n:]), "med linjefilter skal appen ikkje leite etter bytte"
-    assert "Fann ingen avgangar" in pg.locator("#app").inner_text()
+    xq = [x for x in queries[n:] if "x0:trip(" in x]
+    assert xq and "numTripPatterns:8" in xq[0], "med linjefilter skal appen søkje med fleire forslag"
+    rows = pg.locator(".row")
+    assert [rows.nth(i).locator(".pill").all_inner_texts() for i in range(rows.count())] == [["1", "7"]], rows.all_inner_texts()
+
+    # Bytte blanda med direkte avgangar, minste bytetid, og mellomlagring av bytte-søket
+    MIX["on"] = True
+    pg.evaluate("""() => { const c = JSON.parse(localStorage.getItem('neste.cfg'));
+        c.trips.push({id: 'tm', from: c.places[0].id, to: c.places[1].id, lines: ''});
+        localStorage.setItem('neste.cfg', JSON.stringify(c)); localStorage.setItem('neste.cur', JSON.stringify('tm')) }""")
+    n = len(queries); pg.reload(); pg.wait_for_timeout(1200)
+    assert sum("x0:trip(" in x for x in queries[n:]) == 1
+    assert pg.locator(".card h2").first.inner_text().startswith("Sortert etter når du er framme")
+    pills = [r.locator(".pill").all_inner_texts() for r in pg.locator(".row").all()]
+    assert ["3", "4"] in pills and ["3", "6"] in pills, pills
+    for bad in ("5", "3B", "8", "10"):
+        assert not any(bad in p for p in pills), f"bytte med {bad} skulle vore teke bort: {pills}"
+    assert any(p == ["1"] for p in pills) and any(p == ["1E"] for p in pills), "dei direkte avgangane manglar"
+    assert pg.locator(".row.best .pill").all_inner_texts() == ["3", "4"], "bytet er framme først og skal vere det beste"
+    assert "bytt til 4 på Midtvegen" in pg.locator(".hero .s").inner_text()
+    pg.screenshot(path=str(OUT / "bytte_blanda.png"), full_page=True)
+    n = len(queries); pg.click("#status"); pg.wait_for_timeout(600)
+    assert any("estimatedCalls(" in x for x in queries[n:]) and not any("trip(" in x for x in queries[n:]), "bytte-søket skal mellomlagrast"
+    pg.evaluate("() => { const n = Date.now; Date.now = () => n() + 160000 }")  # 2 min 40 s seinare
+    n = len(queries); pg.click("#status"); pg.wait_for_timeout(600)
+    assert any("x0:trip(" in x for x in queries[n:]), "bytte-søket skal køyrast på nytt etter XFER_TTL"
+    MIX["on"] = False
 
     # Delingslenke med eit samband blir importert og vaska
     import base64

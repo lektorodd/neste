@@ -235,11 +235,19 @@ async function load(){
   if(want.length)try{sel=(await linesAt(A.stops)).map(ls=>ls.filter(l=>want.includes(l.code)).map(l=>l.id))}catch(e){}
   const f=(i)=>t.ferry?','+WATER:sel[i]?`,filters:[{select:[{lines:${JSON.stringify(sel[i])}}]}]`:'';
   const qs=A.stops.map((s,i)=>sel[i]&&!sel[i].length?'':`g${i}:stopPlace(id:${JSON.stringify(s.id)}){estimatedCalls(numberOfDepartures:60,timeRange:86400${f(i)}){${CALL}}}`).filter(Boolean);
+  // Reiser med eitt bytte: same tid som avgangane, men frå mellomlageret når det er ferskt (sjå XFER_TTL).
+  const xp=!t.ferry&&qs.length?xferRows(t,A,B,want):null;
   const d=qs.length?await gql('{'+qs.join(' ')+'}'):{};
   let rows=build(t,A,B,d);
-  // Ingen direkte avgang du rekk (og ikkje linjefilter): leit etter reiser med eitt bytte. Feilar det, blir det som før.
-  if(!t.ferry&&!want.length&&!rows.some(r=>!r.cancel&&mins(r.dep)-r.walk>=0)&&t.id===cur)
-   try{const x=await transfers(A,B);rows=rows.concat(x);rows.xfer=x.length>0;rows.tried=true}catch(e){}
+  const x=xp?await xp:null;
+  if(x){
+   // Ta bort bytte som i praksis er ein direkte tur (bussen du går på, går sjølv til målet), og bytte der ein direkte
+   // avgang går like seint eller seinare frå staden og er framme like tidleg eller tidlegare (i heile minutt, som på skjermen).
+   const sjs=new Set(rows.map(r=>r.sj)),live=rows.filter(r=>!r.cancel),M=d=>Math.floor(+d/60000),lv=r=>M(r.dep)-r.walk;
+   const keep=x.filter(r=>!sjs.has(r.sj)&&!live.some(d=>lv(d)>=lv(r)&&M(d.door)<=M(r.door)));
+   const direct=rows.some(r=>!r.cancel&&mins(r.dep)-r.walk>=0);
+   rows=rows.concat(keep);rows.xfer=keep.length>0&&!direct;rows.tried=true;
+  }
   rows.noLines=!qs.length;
   if(t.id===cur&&t.id+t.dir===key){data=rows;err=null;at=new Date()}
  }catch(e){err=e.message||String(e)}
@@ -279,19 +287,43 @@ function build(t,A,B,d){
  return[...out.values()];
 }
 
-// Overgangar, første versjon. Journey Planner `trip` frå kvart frå-stopp til kvart til-stopp (maks 9 par i éin spørjing),
-// med start når du er ved stoppet. Berre turar med nøyaktig eitt bytte som startar og sluttar med kollektiv, sidan
-// gangtida til og frå stoppa er den du har sett. `maximumTransfers:1` gir ingen turar hos Entur (25.11.2026), så vi ber om 2 og filtrerer.
-const LEG='mode aimedStartTime expectedStartTime expectedEndTime realtime fromPlace{name quay{latitude longitude}} toPlace{name} line{publicCode transportMode} serviceJourney{id} fromEstimatedCall{destinationDisplay{frontText} cancellation} situations{situationNumber summary{value language}}';
-async function transfers(A,B){
+// Overgangar. Journey Planner `trip` frå kvart frå-stopp til kvart til-stopp (maks 9 par i éin spørjing), med start når du
+// er ved stoppet. Berre turar med nøyaktig eitt bytte som startar og sluttar med kollektiv, sidan gangtida til og frå stoppa
+// er den du har sett. `maximumTransfers:1` gir ingen turar hos Entur (25.11.2026), så vi ber om 2 og filtrerer.
+// Bytte blir viste saman med direkte avgangar, sorterte etter når du er framme. Linjefilteret gjeld berre første tur.
+const XFER_WAIT=3;      // min: minste ventetid når du byter (etter eventuell gange mellom plattformer eller stopp)
+const XFER_WALK_MIN=5;  // min: minste tid frå ankomst til avgang når du må gå til eit anna stopp
+const XFER_TTL=140000;  // ms: bytte-søket blir mellomlagra per reise; med oppdatering kvart 30. sekund blir det søkt på nytt kvart 2,5 min
+const LEG='mode aimedStartTime expectedStartTime expectedEndTime realtime fromPlace{name quay{latitude longitude stopPlace{id parent{id}}}} toPlace{name quay{stopPlace{id parent{id}}}} line{publicCode transportMode} serviceJourney{id} fromEstimatedCall{destinationDisplay{frontText} cancellation} situations{situationNumber summary{value language}} interchangeTo{staySeated}';
+const xcache=new Map(); // reise + stopp + linjer -> {at, rows (Promise)}
+function xferRows(t,A,B,want){
+ const k=[t.id,A.stops.map(s=>s.id+':'+s.walk),B.stops.map(s=>s.id+':'+s.walk),want].join('|'),c=xcache.get(k);
+ if(c&&Date.now()-c.at<XFER_TTL)return c.rows;
+ const rows=transfers(A,B,want).catch(()=>null); // feilar det, blir det som før (berre direkte avgangar)
+ xcache.set(k,{at:Date.now(),rows});
+ return rows;
+}
+// Held bytet? Same stoppestad: minst XFER_WAIT min etter eventuell gange. Anna stopp: gangtid + XFER_WAIT, og minst XFER_WALK_MIN.
+function xferOK(L,i,j){
+ const gap=(new Date(L[j].expectedStartTime)-new Date(L[i].expectedEndTime))/60000;
+ const walk=L.slice(i+1,j).reduce((s,l)=>s+(new Date(l.expectedEndTime)-new Date(l.expectedStartTime))/60000,0);
+ const same=ids(L[i].toPlace?.quay?.stopPlace).some(x=>ids(L[j].fromPlace?.quay?.stopPlace).includes(x));
+ return gap>=walk+XFER_WAIT&&(same||gap>=XFER_WALK_MIN);
+}
+async function transfers(A,B,want=[]){
  const pairs=A.stops.flatMap(a=>B.stops.map(b=>[a,b])).sort((x,y)=>(+x[0].walk||0)+(+x[1].walk||0)-(+y[0].walk||0)-(+y[1].walk||0)).slice(0,9);
  const at=a=>JSON.stringify(new Date(Date.now()+(+a.walk||0)*60000).toISOString());
- const d=await gql('{'+pairs.map(([a,b],k)=>`x${k}:trip(from:{place:${JSON.stringify(a.id)}},to:{place:${JSON.stringify(b.id)}},dateTime:${at(a)},numTripPatterns:5,maximumTransfers:2){tripPatterns{legs{${LEG}}}}`).join(' ')+'}');
+ const n=want.length?8:5; // med linjefilter går fleire av forslaga med andre linjer, og dei fell bort
+ const d=await gql('{'+pairs.map(([a,b],k)=>`x${k}:trip(from:{place:${JSON.stringify(a.id)}},to:{place:${JSON.stringify(b.id)}},dateTime:${at(a)},numTripPatterns:${n},maximumTransfers:2,transferSlack:${XFER_WAIT*60}){tripPatterns{legs{${LEG}}}}`).join(' ')+'}');
  const out=new Map();
  pairs.forEach(([a,b],k)=>{for(const p of d['x'+k]?.tripPatterns||[]){
   const L=p.legs||[],tr=L.filter(l=>l.line);
   if(tr.length!==2||!L[0].line||!L[L.length-1].line)continue;
-  const [l1,l2]=tr,dep=new Date(l1.expectedStartTime),arr=new Date(l2.expectedEndTime);
+  const [l1,l2]=tr,i=L.indexOf(l1),j=L.indexOf(l2);
+  if(l1.interchangeTo?.staySeated||(l1.serviceJourney?.id&&l1.serviceJourney.id===l2.serviceJourney?.id))continue; // sit på: ikkje eit bytte
+  if(want.length&&!want.includes(String(l1.line.publicCode||'').toUpperCase()))continue; // linjefilteret gjeld første tur
+  if(!xferOK(L,i,j))continue;
+  const dep=new Date(l1.expectedStartTime),arr=new Date(l2.expectedEndTime);
   const r={line:l1.line.publicCode||'–',mode:l1.line.transportMode||'bus',dest:l1.fromEstimatedCall?.destinationDisplay?.frontText||'',dep,
    delay:Math.round((dep-new Date(l1.aimedStartTime))/60000),rt:l1.realtime,cancel:tr.some(l=>l.fromEstimatedCall?.cancellation),
    from:a,walk:+a.walk||0,sj:l1.serviceJourney?.id,quay:l1.fromPlace?.quay,arr,door:new Date(+arr+(+b.walk||0)*60000),to:b,

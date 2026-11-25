@@ -4,8 +4,8 @@ Superenkel avgangsapp for kollektivtrafikk i heile Noreg, bygd på opne data fr�
 
 - **Stader**: ein stad (t.d. «Heim», «Jobb») er eit sett med stopp du brukar der, med gangtid til kvart stopp. Seier du kvar staden er (adresse, skule, arbeidsplass), viser appen stopp innan 1,5 km med gangtid rekna langs vegane, og nye stopp får ekte gangtid.
 - **Reiser**: frå ein stad til ein annan. Appen samanliknar alle avgangar frå stoppa dine og sorterer etter når du er framme dør til dør.
-  Finst det ingen direkte avgang du rekk, viser appen reiser med eitt bytte (begge linjene, kvar du byter og kor lang tid du har).
-  Vil du berre ha nokre linjer (t.d. «40, 40E»), hentar appen berre avgangane for dei, så lista held i mange timar også på store terminalar.
+  Reiser med eitt bytte står i same lista når dei får deg fram tidlegare eller lèt deg gå seinare enn dei direkte avgangane (begge linjene, kvar du byter og kor lang tid du har). Appen krev minst 3 min til bytet, og minst 5 min når du må gå til eit anna stopp.
+  Vil du berre ha nokre linjer (t.d. «40, 40E»), hentar appen berre avgangane for dei, så lista held i mange timar også på store terminalar. Filteret gjeld bussen du går på; bytar du, kan den neste vere kva linje som helst.
 - **Rekkjefølgje**: flytt reiser og samband opp og ned under Oppsett → «Rekkjefølgje». Den første opnar når appen ikkje har noko anna val, til dømes rett etter import.
 - **Ferjesamband**: éi oppføring for begge retningar (t.d. «A ⇄ B»). Søk opp kaien og vel kaien på andre sida, så viser appen berre ferjer frå kaien du er ved. «Snu» byter side. Vil du, kan appen velje kai etter posisjonen din. Posisjonen blir då berre samanlikna med kaiane på eininga di og verken lagra eller sendt.
 - **Avvik**: meldingar frå trafikkselskapa (innstilt, omkøyring, færre vogner …) står på avgangane dei gjeld. Trykk på meldinga under lista for heile teksten.
