@@ -6,7 +6,8 @@ Skjermbilete hamnar i tests/out/. Testen går gjennom oppsettet
 (søk, legg til stopp, ny stad, reise + retur), reisevisinga, linjefilteret, avvik, rekkjefølgja, QR-koden, overgangar (blanda med direkte avgangar,
 minste bytetid, linjefilter på første tur, mellomlagring),
 følgjekartet (Leaflet frå cdnjs; blir hoppa over utan nett), kvar ein
-stad er (stopp i nærleiken med gangtid) og ferjesamband (snu kai, og kai vald etter påfunnen posisjon). Sjekkar òg
+stad er (stopp i nærleiken med gangtid), ferjesamband (snu kai, og kai vald etter påfunnen posisjon) og
+reise vald etter påfunnen posisjon (sist brukte reise frå staden, ikkje overstyre eit nytt val). Sjekkar òg
 manifest og ikon.
 """
 import json, datetime as dt, pathlib
@@ -196,7 +197,7 @@ with sync_playwright() as p:
     import os
     b = p.chromium.launch(executable_path=os.environ.get("CHROME") or None)
     ctx = b.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, color_scheme="dark",
-                        permissions=["geolocation"], geolocation={"latitude": 60.09, "longitude": 5.01})  # påfunne, ved Motkai
+                        permissions=["geolocation"], geolocation={"latitude": 60.08, "longitude": 5.01})  # påfunne, nærast Motkai
     pg = ctx.new_page()
     errs = []
     pg.on("pageerror", lambda e: errs.append(str(e)))
@@ -330,12 +331,13 @@ with sync_playwright() as p:
     # Vel kai etter (påfunnen) posisjon ved Motkai
     pg.click("#setup"); pg.wait_for_timeout(300)
     assert pg.locator(".trip").count() == 2, "sambandet skal ikkje liggje mellom vanlege reiser"
-    pg.check("[data-act=autoside]"); pg.wait_for_timeout(300)
+    assert pg.locator("[data-act=auto]").count() == 1, "manglar innstillinga for posisjon"
+    pg.check("[data-act=auto]"); pg.wait_for_timeout(300)
     pg.click("[data-act=done]"); pg.wait_for_timeout(1200)
     hero = pg.locator(".hero .k").inner_text()
     assert hero.startswith("Frå Motkai til Testkai") and "posisjonen din" in hero, hero
     stored = pg.evaluate("JSON.stringify(Object.assign({}, localStorage))")
-    assert "60.09" not in stored and "5.01" not in stored, "posisjonen vart lagra"
+    assert "60.08" not in stored and "5.01" not in stored, "posisjonen vart lagra"
 
     # Rekkjefølgje: opp/ned for alle reiser (vanlege og samband), og den første opnar utan lagra val
     pg.click("#setup"); pg.wait_for_timeout(300)
@@ -421,6 +423,47 @@ with sync_playwright() as p:
     n = len(queries); pg.click("#status"); pg.wait_for_timeout(600)
     assert any("x0:trip(" in x for x in queries[n:]), "bytte-søket skal køyrast på nytt etter XFER_TTL"
     MIX["on"] = False
+
+    # Vel reise etter kvar du er: påfunne punkt for stadene og påfunne posisjonar
+    pg.evaluate("""() => { const c = JSON.parse(localStorage.getItem('neste.cfg')), [h, s] = c.places, pts = {};
+        pts[h.id] = {lat: 61.0, lon: 5.0, label: 'Testpunkt heim'}; pts[s.id] = {lat: 61.5, lon: 5.0, label: 'Testpunkt sentrum'};
+        localStorage.setItem('neste.pts', JSON.stringify(pts));
+        localStorage.setItem('neste.brukt', JSON.stringify({tf: Date.now() - 3600e3, tm: Date.now() - 7200e3}));
+        localStorage.setItem('neste.cur', JSON.stringify(c.trips.find(t => t.from === s.id).id)) }""")
+    cur = lambda: pg.evaluate("JSON.parse(localStorage.getItem('neste.cur'))")
+    ctx.set_geolocation({"latitude": 61.0013, "longitude": 5.0007})  # ved «Heim»
+    pg.reload(); pg.wait_for_timeout(1200)
+    assert cur() == "tf", "skulle opne den sist brukte reisa frå Heim"
+    assert "vald etter posisjonen din" in pg.locator(".hero .k").inner_text(), pg.locator(".hero .k").inner_text()
+    pg.screenshot(path=str(OUT / "auto_reise.png"))
+    pg.locator("#chips button", has_text="Heim → Sentrum").first.click(); pg.wait_for_timeout(300)  # brukaren vel sjølv
+    hs = cur()
+    assert "posisjonen din" not in pg.locator(".hero .k").inner_text()
+    ctx.set_geolocation({"latitude": 61.5004, "longitude": 5.0})  # ved «Sentrum»
+    bg = """m => { Object.defineProperty(document, 'hidden', {configurable: true, get: () => window._h});
+        window._h = true; document.dispatchEvent(new Event('visibilitychange'));
+        const n = Date.now; Date.now = () => n() + m * 60000; window._h = false; document.dispatchEvent(new Event('visibilitychange')) }"""
+    pg.evaluate(bg, 3); pg.wait_for_timeout(800)
+    assert cur() == hs, "eit val brukaren nett gjorde skal ikkje overstyrast"
+    pg.evaluate(bg, 11); pg.wait_for_timeout(800)
+    sh = pg.evaluate("(c => c.trips.find(t => t.from === c.places[1].id).id)(JSON.parse(localStorage.getItem('neste.cfg')))")
+    assert cur() == sh, "etter lang tid i bakgrunnen skal reisa veljast etter posisjonen"
+    stored = pg.evaluate("JSON.stringify(Object.assign({}, localStorage))")
+    assert "61.0013" not in stored and "61.5004" not in stored and "5.0007" not in stored, "posisjonen vart lagra"
+    assert "brukt" not in pg.evaluate("localStorage.getItem('neste.cfg')"), "bruken skal ikkje i oppsettet (delingslenka)"
+    ctx.set_geolocation({"latitude": 61.0013, "longitude": 5.0007}); pg.reload(); pg.wait_for_timeout(1000)
+    assert cur() == hs, "heime igjen: den sist brukte reisa frå Heim er no den brukaren valde"
+    ctx.set_geolocation({"latitude": 63.0, "longitude": 9.0}); pg.reload(); pg.wait_for_timeout(1000)  # langt frå alt
+    assert cur() == hs and "posisjonen din" not in pg.locator("#app").inner_text(), "utan stad i nærleiken skal appen gjere som før"
+    # Den gamle innstillinga berre for kai blir flytta til den nye
+    pg.evaluate("() => { localStorage.setItem('neste.autoside', 'true'); localStorage.removeItem('neste.auto') }")
+    pg.reload(); pg.wait_for_timeout(500)
+    assert pg.evaluate("localStorage.getItem('neste.auto')") == "true" and pg.evaluate("localStorage.getItem('neste.autoside')") is None
+    pg.click("#setup"); pg.wait_for_timeout(300)
+    assert pg.locator("[data-act=auto]").is_checked()
+    pg.locator("[data-act=auto]").scroll_into_view_if_needed(); pg.screenshot(path=str(OUT / "auto_oppsett.png"))
+    pg.click("[data-act=done]"); pg.wait_for_timeout(300)
+    ctx.set_geolocation({"latitude": 60.08, "longitude": 5.01})
 
     # Delingslenke med eit samband blir importert og vaska
     import base64
