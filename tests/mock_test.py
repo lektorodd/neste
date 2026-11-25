@@ -246,6 +246,32 @@ with sync_playwright() as p:
     assert pg.locator("#chips button").all_inner_texts() == ["Testkai ⇄ Motkai"]
     t = pg.evaluate("JSON.parse(localStorage.getItem('neste.cfg')).trips[0]")
     assert "x" not in t and t["ferry"]["a"]["name"] == "Testkai", t
+
+    # Lim inn delingslenke i appen (slik ein må gjere i appen på Heim-skjermen på iPhone)
+    other = {"p": [{"id": "p1", "name": "Limstad", "stops": [{"id": A, "name": "Testvik øvre", "walk": 3}]}], "t": []}
+    code = base64.urlsafe_b64encode(json.dumps(other).encode()).decode().rstrip("=")
+    pg.click("#setup"); pg.wait_for_timeout(300)
+    pg.click("[data-act=paste]"); pg.fill("#impTxt", "sjå her: https://example.org/neste/#oppsett=" + code)
+    pg.click("[data-act=impPaste]"); pg.wait_for_timeout(200)
+    assert "1 stader og 0 reiser" in pg.locator("#dlg").inner_text()
+    assert pg.locator("[data-act=copyLink]").count() == 0, "iPhone-rettleiinga skal ikkje visast utanfor Safari"
+    pg.click("[data-act=impYes]"); pg.wait_for_timeout(500)
+    assert pg.evaluate("JSON.parse(localStorage.getItem('neste.cfg')).places[0].name") == "Limstad"
+    pg.click("#setup"); pg.wait_for_timeout(300)
+    pg.click("[data-act=paste]"); pg.fill("#impTxt", "ingen lenke her"); pg.click("[data-act=impPaste]")
+    assert "Fann inga delingslenke" in pg.locator("#dlg").inner_text()
+    pg.click("[data-act=impNo]"); pg.click("[data-act=done]"); pg.wait_for_timeout(300)
+
+    # Safari på iPhone: rettleiing om appen på Heim-skjermen, og ei anna open fane får med seg importen
+    ios = ctx.new_page(); ios.on("pageerror", lambda e: errs.append(str(e)))
+    ios.route("**/journey-planner/**", jp)
+    ios.add_init_script("Object.defineProperty(navigator, 'standalone', {value: false})")
+    ios.goto((ROOT / "index.html").as_uri() + "#oppsett=" + enc); ios.wait_for_timeout(500)
+    assert "Brukar du Neste frå Heim-skjermen?" in ios.locator("#dlg").inner_text()
+    assert ios.locator("[data-act=copyLink]").count() == 1
+    ios.click("[data-act=impYes]"); ios.wait_for_timeout(800)
+    pg.bring_to_front(); pg.wait_for_timeout(800)
+    assert pg.locator("#chips button").all_inner_texts() == ["Testkai ⇄ Motkai"], "den andre fana fekk ikkje med seg importen"
     b.close()
     print("Feil i sida:", errs or "ingen")
     assert not errs

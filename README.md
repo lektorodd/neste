@@ -8,6 +8,8 @@ Superenkel avgangsapp for kollektivtrafikk i heile Noreg, bygd på opne data fr�
 - **Følg bussen**: trykk på ein avgang, så viser kartet kvar bussen eller båten er no, med forseinking. Posisjonane kjem frå Entur sitt sanntids-API for køyretøy. Ikkje alle sender (til dømes Bybanen), og mange sender først når turen har starta.
 - **Søk og kart**: finn stopp med søk (Entur Geocoder) eller på kartet (OpenStreetMap / Leaflet).
 - **Del med familien**: delingslenka inneheld stader, stopp og reiser i `#`-delen av adressa, som aldri blir sendt til nokon server.
+  - **Android**: opne lenka i Chrome. Appen på Heim-skjermen deler lagring med Chrome og får med seg oppsettet.
+  - **iPhone**: appen på Heim-skjermen har eiga lagring, skild frå Safari. Kopier lenka, opne Neste frå Heim-skjermen og vel Oppsett → «Opne delingslenke». Opnar du lenka i Safari, minner appen deg på dette.
 
 ## Personvern
 
