@@ -4,10 +4,15 @@ Superenkel avgangsapp for kollektivtrafikk i heile Noreg, bygd på opne data fr�
 
 - **Stader**: ein stad (t.d. «Heim», «Jobb») er eit sett med stopp du brukar der, med gangtid til kvart stopp. Seier du kvar staden er (adresse, skule, arbeidsplass), viser appen stopp innan 1,5 km med gangtid rekna langs vegane, og nye stopp får ekte gangtid.
 - **Reiser**: frå ein stad til ein annan. Appen samanliknar alle avgangar frå stoppa dine og sorterer etter når du er framme dør til dør.
+  Finst det ingen direkte avgang du rekk, viser appen reiser med eitt bytte (begge linjene, kvar du byter og kor lang tid du har).
+  Vil du berre ha nokre linjer (t.d. «40, 40E»), hentar appen berre avgangane for dei, så lista held i mange timar også på store terminalar.
+- **Rekkjefølgje**: flytt reiser og samband opp og ned under Oppsett → «Rekkjefølgje». Den første opnar når appen ikkje har noko anna val, til dømes rett etter import.
 - **Ferjesamband**: éi oppføring for begge retningar (t.d. «A ⇄ B»). Søk opp kaien og vel kaien på andre sida, så viser appen berre ferjer frå kaien du er ved. «Snu» byter side. Vil du, kan appen velje kai etter posisjonen din. Posisjonen blir då berre samanlikna med kaiane på eininga di og verken lagra eller sendt.
+- **Avvik**: meldingar frå trafikkselskapa (innstilt, omkøyring, færre vogner …) står på avgangane dei gjeld. Trykk på meldinga under lista for heile teksten.
 - **Følg bussen**: trykk på ein avgang, så viser kartet kvar bussen eller båten er no, med forseinking. Posisjonane kjem frå Entur sitt sanntids-API for køyretøy. Ikkje alle sender (til dømes Bybanen), og mange sender først når turen har starta.
 - **Søk og kart**: finn stopp med søk (Entur Geocoder) eller på kartet (OpenStreetMap / Leaflet).
 - **Del med familien**: delingslenka inneheld stader, stopp og reiser i `#`-delen av adressa, som aldri blir sendt til nokon server.
+  - **QR-kode**: Oppsett → «Vis QR-kode», og skann med kameraet på den andre telefonen. Lenka opnar då i nettlesaren, så på iPhone gjeld det same som under.
   - **Android**: opne lenka i Chrome. Appen på Heim-skjermen deler lagring med Chrome og får med seg oppsettet.
   - **iPhone**: appen på Heim-skjermen har eiga lagring, skild frå Safari. Kopier lenka, opne Neste frå Heim-skjermen og vel Oppsett → «Opne delingslenke». Opnar du lenka i Safari, minner appen deg på dette.
 

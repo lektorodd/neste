@@ -3,7 +3,7 @@
 Køyr:  pip install playwright && playwright install chromium
        python tests/mock_test.py
 Skjermbilete hamnar i tests/out/. Testen går gjennom oppsettet
-(søk, legg til stopp, ny stad, reise + retur), reisevisinga,
+(søk, legg til stopp, ny stad, reise + retur), reisevisinga, linjefilteret, avvik, rekkjefølgja, QR-koden, overgangar,
 følgjekartet (Leaflet frå cdnjs; blir hoppa over utan nett), kvar ein
 stad er (stopp i nærleiken med gangtid) og ferjesamband (snu kai, og kai vald etter påfunnen posisjon). Sjekkar òg
 manifest og ikon.
@@ -27,6 +27,8 @@ WALK = {A: 240, B: 360, "NSR:StopPlace:1003": 545, "NSR:StopPlace:1004": 660}
 NEAR = [(A, "Testvik øvre", 200), (B, "Testvik nedre", 350), ("NSR:StopPlace:1003", "Testvik sør", 500)]
 # Påfunne ferjekaiar: barne-stopp 31xx med forelder 30xx, og kvar sin påfunne posisjon.
 KAI = {"NSR:StopPlace:3001": ("Testkai ferjekai", 60.0), "NSR:StopPlace:3002": ("Motkai ferjekai", 60.1)}
+# Påfunne linjer ved stoppa. «1E» finst òg ved eit anna stopp med ein annan ID, som ikkje skal med i filteret.
+LINES = {A: ["1", "X9", "Y9"], B: ["1E"], "NSR:StopPlace:1004": ["1E-anna"]}
 queries = []
 
 def geo(route):
@@ -40,13 +42,21 @@ def geo(route):
          for k, v in GEO.items() if q.lower() in k.lower() for i, n, c in v]
     route.fulfill(status=200, content_type="application/json", body=json.dumps({"features": f}))
 
-def call(o, line, dep, arr, delay=0, occ="noData", board=True, alight=True):
+# Påfunne avvik (SIRI SX). Samandraget kjem med avgangen; heile teksten blir henta ved trykk.
+SIT = {"T:SituationNumber:1": [{"value": "Diversion", "language": "en"}, {"value": "Omkøyring forbi Testvik", "language": "no"}],
+       "T:SituationNumber:2": [{"value": "Heisen er ute av drift", "language": None}],
+       "T:SituationNumber:3": [{"value": "Omkøyring forbi Testvik", "language": "nn"}]}  # same samandrag, eige avvik
+SIT_FULL = {"T:SituationNumber:1": "Bussen køyrer ein annan veg på grunn av påfunne vegarbeid.",
+            "T:SituationNumber:2": "Bruk trappa.", "T:SituationNumber:3": "Same omkøyring."}
+
+def call(o, line, dep, arr, delay=0, occ="noData", board=True, alight=True, sit=()):
     # Som hos Entur: stoppa vidare er barne-stopp (kai) med stoppet frå geocoderen som parent.
     return {"realtime": True, "cancellation": False, "forBoarding": board, "quay": {"latitude": 60.0, "longitude": 5.0},
             "aimedDepartureTime": iso(dep - delay),
             "expectedDepartureTime": iso(dep), "occupancyStatus": occ,
             "destinationDisplay": {"frontText": "Sentrum"},
             "serviceJourney": {"id": f"T:SJ:{line}{dep}", "line": {"publicCode": line, "transportMode": "bus"}},
+            "situations": [{"situationNumber": n, "summary": SIT[n]} for n in sit],
             "serviceJourneyEstimatedCalls": {"next": [
                 {"forAlighting": alight, "quay": {"stopPlace": {"id": HUB_KAI, "parent": {"id": HUB}}},
                  "aimedArrivalTime": iso(arr), "expectedArrivalTime": iso(arr)}]}}
@@ -63,6 +73,28 @@ def ferry_call(sid, line, dep, mode="water"):
                   "latitude": KAI[other][1], "longitude": 5.0}}},
                  "aimedArrivalTime": iso(dep + 20), "expectedArrivalTime": iso(dep + 20)}]}}
 
+FJERN = "NSR:StopPlace:4001"  # påfunnen stad utan direkte avgang frå Testvik
+
+def leg(line, dep, arr, frm, to, sj=None, aimed=None, sit=()):
+    if line is None:
+        return {"mode": "foot", "line": None, "aimedStartTime": iso(dep), "expectedStartTime": iso(dep), "expectedEndTime": iso(arr),
+                "fromPlace": {"name": frm, "quay": None}, "toPlace": {"name": to}}
+    return {"mode": "bus", "aimedStartTime": iso(aimed if aimed is not None else dep), "expectedStartTime": iso(dep), "expectedEndTime": iso(arr),
+            "realtime": True, "fromPlace": {"name": frm, "quay": {"latitude": 60.0, "longitude": 5.0}}, "toPlace": {"name": to},
+            "line": {"publicCode": line, "transportMode": "bus"}, "serviceJourney": {"id": sj or f"T:SJ:{line}-{dep}"},
+            "fromEstimatedCall": {"destinationDisplay": {"frontText": "Sentrum" if line != "7" else "Fjernby"}, "cancellation": False},
+            "situations": [{"situationNumber": n, "summary": SIT[n]} for n in sit]}
+
+def trips(frm):
+    """Påfunne reiser med bytte i Sentrum. Berre den første typen (eitt bytte, utan gange først/sist) skal visast."""
+    first = ("1", 10, 25, "Testvik øvre") if frm == A else ("1E", 14, 27, "Testvik nedre")
+    ok = [leg(first[0], first[1], first[2], first[3], "Sentrum terminal", aimed=first[1] - 1),
+          leg(None, first[2], first[2] + 3, "Sentrum terminal", "Sentrum torg"),
+          leg("7", 31, 50, "Sentrum torg", "Fjernby", sj="T:SJ:7-31", sit=["T:SituationNumber:2"])]
+    walk_first = [leg(None, 0, 4, first[3], "Anna stopp")] + ok
+    two = [ok[0], leg("2", 27, 29, "Sentrum terminal", "Sentrum torg"), ok[2]]
+    return [{"legs": ok}, {"legs": walk_first}, {"legs": two}]
+
 def jp(route):
     q = json.loads(route.request.post_data)["query"]
     queries.append(q)
@@ -73,23 +105,43 @@ def jp(route):
         if f"w{i}:trip(" in q:
             sid = q.split(f"w{i}:trip(")[1].split('place:"')[1].split('"')[0]
             d[f"w{i}"] = {"tripPatterns": [{"duration": WALK[sid]}]}
-    if "g0:" not in q and "stopPlace(id:" in q:  # oppslag av ferjesamband frå ein kai
+    if "situation(situationNumber:" in q:
+        n = q.split('situationNumber:"')[1].split('"')[0]
+        d["situation"] = {"description": [{"value": "Full text", "language": "en"}, {"value": SIT_FULL[n], "language": "nob"}],
+                          "advice": [], "infoLinks": [{"uri": "https://example.org/avvik", "label": "Meir om avviket"},
+                                                      {"uri": "javascript:alert(1)", "label": "farleg"}],
+                          "validityPeriods": [{"startTime": iso(-60), "endTime": iso(600)}]}
+    for k in range(9):  # reiser med bytte
+        if f"x{k}:trip(" in q:
+            seg = q.split(f"x{k}:trip(")[1]
+            frm, to = seg.split('place:"')[1].split('"')[0], seg.split('place:"')[2].split('"')[0]
+            d[f"x{k}"] = {"tripPatterns": trips(frm) if to == FJERN else []}
+    for i in range(4):  # linjene ved eit stopp (til linjefilteret)
+        if f"l{i}:stopPlace(" in q:
+            sid = q.split(f'l{i}:stopPlace(id:"')[1].split('"')[0]
+            d[f"l{i}"] = {"quays": [{"lines": [{"id": "T:Line:" + c, "publicCode": c} for c in LINES.get(sid, [])]}]}
+    if q.startswith("{stopPlace(id:"):  # oppslag av ferjesamband frå ein kai
         sid = q.split('stopPlace(id:"')[1].split('"')[0]
         d["stopPlace"] = {"name": KAI[sid][0], "latitude": KAI[sid][1], "longitude": 5.0,
                           "estimatedCalls": [ferry_call(sid, "F1", m) for m in (10, 40)]}
     for i in range(4):
         if f"g{i}:" not in q:
             continue
-        sid = q.split(f'g{i}:stopPlace(id:"')[1].split('"')[0]
+        seg = q.split(f"g{i}:")[1].split("realtime")[0]
+        sid = seg.split('stopPlace(id:"')[1].split('"')[0]
+        only = json.loads(seg.split("lines:")[1].split("}")[0]) if "lines:" in seg else None
         if sid in KAI:  # ferje + ein buss som køyrer med ferja (skal filtrerast bort)
             d[f"g{i}"] = {"estimatedCalls": [ferry_call(sid, "F1", m) for m in (7, 37)] + [ferry_call(sid, "C9", 8, "coach")]}
             continue
         mins = (3, 12, 25) if sid == A else (9, 24)
         line = "1" if sid == A else "1E"
         calls = [call(sid, line, m, m + 19, delay=2 if m == 12 else 0,
-                      occ="fewSeatsAvailable" if m == 12 else "noData") for m in mins]
+                      occ="fewSeatsAvailable" if m == 12 else "noData",
+                      sit={9: ["T:SituationNumber:1"], 12: ["T:SituationNumber:2"], 24: ["T:SituationNumber:3"]}.get(m, [])) for m in mins]
         if sid == A:  # skal ikkje visast: set ikkje av i Sentrum / tek ikkje på her
             calls += [call(sid, "X9", 5, 20, alight=False), call(sid, "Y9", 6, 21, board=False)]
+        if only is not None:  # som Entur: berre avgangar med desse line-ID-ane
+            calls = [c for c in calls if "T:Line:" + c["serviceJourney"]["line"]["publicCode"] in only]
         d[f"g{i}"] = {"estimatedCalls": calls}
     route.fulfill(status=200, content_type="application/json", body=json.dumps({"data": d}))
 
@@ -153,6 +205,23 @@ with sync_playwright() as p:
     pills = pg.locator(".pill").all_inner_texts()
     assert "X9" not in pills and "Y9" not in pills, "viste avgang utan på-/avstiging"
 
+    # Avvik: samandrag på norsk i helten og på radene, éi oppføring per avvik, heile teksten ved trykk
+    assert "situations{situationNumber summary{value language}}" in queries[-1]
+    assert "description" not in queries[-1].split("situations{")[1], "heile teksten skal ikkje hentast med avgangane"
+    assert "Omkøyring forbi Testvik" in pg.locator(".hero .avb").inner_text(), pg.locator(".hero").inner_text()
+    assert pg.locator(".row .av").count() == 3
+    sit = pg.locator(".card .sit")
+    assert sit.count() == 2, sit.all_inner_texts()
+    assert "1E" in sit.nth(0).inner_text() and "Heisen er ute av drift" in sit.nth(1).inner_text()
+    sit.nth(0).click(); pg.wait_for_timeout(400)
+    dlg = pg.locator("#dlg").inner_text()
+    assert "påfunne vegarbeid" in dlg and "Full text" not in dlg and "Meir om avviket" in dlg and "farleg" not in dlg, dlg
+    assert "Gjeld til" in dlg
+    pg.screenshot(path=str(OUT / "avvik.png"))
+    n = len(queries); pg.click("#dlg [data-act=impNo]"); pg.locator(".hero .avb").click(); pg.wait_for_timeout(300)
+    assert len(queries) == n and "påfunne vegarbeid" in pg.locator("#dlg").inner_text(), "heile teksten skal liggje i minnet"
+    pg.click("#dlg [data-act=impNo]")
+
     # Følg ein tur på kartet (Leaflet frå cdnjs; fliser og posisjonar er påfunne)
     pg.locator(".row", has_text="1E").first.click(); pg.wait_for_timeout(2500)
     note = pg.locator("#mapNote").inner_text()
@@ -171,6 +240,25 @@ with sync_playwright() as p:
         pg.screenshot(path=str(OUT / "follow.png"))
         pg.click("[data-act=mapClose]"); pg.wait_for_timeout(200)
         assert pg.locator("#map.on").count() == 0
+
+    # Linjefilter på serveren: berre line-ID-ar som går frå stoppa, og stopp utan linja blir ikkje spurde
+    pg.click("#setup"); pg.wait_for_timeout(300)
+    lf = pg.locator(".trip [data-act=tlines]").first
+    lf.fill("1e"); lf.dispatch_event("change"); pg.click("[data-act=done]"); pg.wait_for_timeout(800)
+    assert any("l0:stopPlace(" in x and "quays{lines{id publicCode}}" in x for x in queries), "slo ikkje opp linjene"
+    q = queries[-1]
+    assert 'lines:["T:Line:1E"]' in q and "g1:" in q and "g0:" not in q, q
+    assert pg.locator(".row .pill").all_inner_texts() == ["1E", "1E"], pg.locator(".row .pill").all_inner_texts()
+    n = len(queries); pg.click("#status"); pg.wait_for_timeout(500)
+    assert len(queries) == n + 1, "linjene skal liggje i minnet, ikkje slåast opp på nytt"
+    pg.click("#setup"); pg.wait_for_timeout(300)
+    lf = pg.locator(".trip [data-act=tlines]").first
+    lf.fill("77"); lf.dispatch_event("change"); pg.click("[data-act=done]"); pg.wait_for_timeout(800)
+    assert "Fann ikkje linje 77 ved stoppa i Heim" in pg.locator("#app").inner_text()
+    pg.click("#setup"); pg.wait_for_timeout(300)
+    lf = pg.locator(".trip [data-act=tlines]").first
+    lf.fill(""); lf.dispatch_event("change"); pg.click("[data-act=done]"); pg.wait_for_timeout(800)
+    assert pg.locator(".row").count() == 5 and "filters" not in queries[-1]
 
     # Kvar er staden: søk adresse, få stopp i nærleiken med gangtid frå Entur
     pg.click("#setup"); pg.wait_for_timeout(300)
@@ -227,6 +315,28 @@ with sync_playwright() as p:
     stored = pg.evaluate("JSON.stringify(Object.assign({}, localStorage))")
     assert "60.09" not in stored and "5.01" not in stored, "posisjonen vart lagra"
 
+    # Rekkjefølgje: opp/ned for alle reiser (vanlege og samband), og den første opnar utan lagra val
+    pg.click("#setup"); pg.wait_for_timeout(300)
+    order = lambda: [x.split("\n")[1] for x in pg.locator("#order .ord").all_inner_texts()]
+    assert order() == ["Heim → Sentrum", "Sentrum → Heim", "Testkai ⇄ Motkai"], order()
+    assert pg.locator("#order .ord").first.locator("[data-act=tup]").is_disabled()
+    assert pg.locator("#order .ord").last.locator("[data-act=tdown]").is_disabled()
+    pg.locator("#order .ord").last.locator("[data-act=tup]").click(); pg.wait_for_timeout(200)
+    assert pg.evaluate("document.activeElement.dataset.act") == "tup", "fokus skal bli verande på knappen"
+    pg.keyboard.press("Enter"); pg.wait_for_timeout(200)  # flytt han øvst med tastaturet
+    assert order() == ["Testkai ⇄ Motkai", "Heim → Sentrum", "Sentrum → Heim"], order()
+    assert pg.evaluate("document.activeElement.dataset.act") == "tdown", "øvst: fokus til ned-knappen"
+    pg.locator("#order .ord").nth(1).locator("[data-act=tdown]").click(); pg.wait_for_timeout(200)
+    assert order() == ["Testkai ⇄ Motkai", "Sentrum → Heim", "Heim → Sentrum"], order()
+    pg.screenshot(path=str(OUT / "order.png"), full_page=True)
+    pg.click("[data-act=done]"); pg.wait_for_timeout(300)
+    assert pg.locator("#chips button").all_inner_texts() == ["Testkai ⇄ Motkai", "Sentrum → Heim", "Heim → Sentrum"]
+    pg.locator("#chips button").nth(2).click(); pg.wait_for_timeout(300)
+    pg.reload(); pg.wait_for_timeout(500)
+    assert pg.locator("#chips [aria-pressed=true]").inner_text() == "Heim → Sentrum", "lagra val skal haldast"
+    pg.evaluate("localStorage.removeItem('neste.cur')"); pg.reload(); pg.wait_for_timeout(500)
+    assert pg.locator("#chips [aria-pressed=true]").inner_text() == "Testkai ⇄ Motkai", "den første skal opne utan lagra val"
+
     # Gamalt heimepunkt blir flytta til staden «Heim»
     pg.evaluate("() => { localStorage.setItem('neste.home', JSON.stringify({lat:60.2,lon:5.2})); localStorage.removeItem('neste.pts') }")
     pg.reload(); pg.wait_for_timeout(500)
@@ -234,6 +344,35 @@ with sync_playwright() as p:
     moved = pg.evaluate("JSON.parse(localStorage.getItem('neste.pts'))")
     assert moved.get(heim_id, {}).get("lat") == 60.2, moved
     assert pg.evaluate("localStorage.getItem('neste.home')") is None
+
+    # Overgangar: ingen direkte avgang til Fjernby, så appen søkjer etter reiser med eitt bytte frå kvart stopp
+    pg.evaluate("""() => { const c = JSON.parse(localStorage.getItem('neste.cfg'));
+        c.places.push({id: 'fj', name: 'Fjernby', stops: [{id: 'NSR:StopPlace:4001', name: 'Fjernby', label: '', mode: 'bus', walk: 2}]});
+        c.trips.push({id: 'tf', from: c.places[0].id, to: 'fj', lines: ''}, {id: 'tl', from: c.places[0].id, to: 'fj', lines: '1'});
+        localStorage.setItem('neste.cfg', JSON.stringify(c)); localStorage.setItem('neste.cur', JSON.stringify('tf')) }""")
+    pg.reload(); pg.wait_for_timeout(1000)
+    q = next(x for x in reversed(queries) if "x0:trip(" in x)
+    assert "maximumTransfers:2" in q and 'place:"NSR:StopPlace:4001"' in q and "x1:trip(" in q, q[:300]
+    walk_a = pg.evaluate("JSON.parse(localStorage.getItem('neste.cfg')).places[0].stops[0].walk")
+    t0 = dt.datetime.fromisoformat(q.split('dateTime:"')[1].split('"')[0].replace("Z", "+00:00"))
+    assert abs((t0 - dt.datetime.now(dt.timezone.utc)).total_seconds() / 60 - walk_a) < 1.5, "søket skal starte når du er ved stoppet"
+    assert pg.locator(".card h2").first.inner_text().startswith("Med eitt bytte")
+    rows = pg.locator(".row")
+    assert rows.count() == 2, rows.all_inner_texts()
+    assert [rows.nth(i).locator(".pill").all_inner_texts() for i in range(2)] == [["1", "7"], ["1E", "7"]]
+    assert "bytt på Sentrum terminal → Sentrum torg (6 min)" in rows.first.inner_text(), rows.first.inner_text()
+    hero = pg.locator(".hero .s").inner_text()
+    assert "bytt til 7 på Sentrum torg" in hero, hero
+    assert "Heisen er ute av drift" in rows.first.inner_text(), "avvik på den andre turen skal visast"
+    assert pg.locator(".card .sit .ln").all_inner_texts() == ["7"], "avviket gjeld linje 7, ikkje den første bussen"
+    pg.screenshot(path=str(OUT / "bytte.png"), full_page=True)
+    rows.first.click(); pg.wait_for_timeout(1500)  # følg den første turen
+    if "lasta ikkje" not in pg.locator("#mapNote").inner_text():
+        assert "Testvik øvre" in pg.locator("#mapNote").inner_text()
+        pg.click("[data-act=mapClose]"); pg.wait_for_timeout(200)
+    n = len(queries); pg.locator("#chips button", has_text="Heim → Fjernby").nth(1).click(); pg.wait_for_timeout(800)
+    assert not any("trip(" in x for x in queries[n:]), "med linjefilter skal appen ikkje leite etter bytte"
+    assert "Fann ingen avgangar" in pg.locator("#app").inner_text()
 
     # Delingslenke med eit samband blir importert og vaska
     import base64
@@ -261,6 +400,29 @@ with sync_playwright() as p:
     pg.click("[data-act=paste]"); pg.fill("#impTxt", "ingen lenke her"); pg.click("[data-act=impPaste]")
     assert "Fann inga delingslenke" in pg.locator("#dlg").inner_text()
     pg.click("[data-act=impNo]"); pg.click("[data-act=done]"); pg.wait_for_timeout(300)
+
+    # QR-kode for delingslenka: kodaren blir lasta frå cdnjs først når han trengst (blir hoppa over utan nett)
+    assert pg.evaluate("!!document.querySelector('script[src*=qrcode]')") is False, "QR-kodaren skal ikkje lastast før han trengst"
+    pg.click("#setup"); pg.wait_for_timeout(300)
+    pg.click("[data-act=qr]"); pg.wait_for_timeout(2500)
+    if "lasta ikkje" in pg.locator("#dlg").inner_text():
+        print("Hoppar over QR-delen: QR-kodaren lasta ikkje (utan nett?)")
+    else:
+        assert pg.evaluate("document.querySelector('script[src*=qrcode]').integrity.startsWith('sha384-')")
+        svg = pg.locator("#dlg .qr svg")
+        assert svg.count() == 1 and pg.locator("#dlg .qr path").get_attribute("d").count("h1v1") > 200
+        assert "Kopier lenka" in pg.locator("#dlg").inner_text(), "rettleiinga for iPhone manglar"
+        pg.screenshot(path=str(OUT / "qr.png"))
+        pg.click("#dlg [data-act=impNo]")
+        # For stort oppsett til éin kode: melding i staden for feil
+        pg.evaluate("""() => { const c = JSON.parse(localStorage.getItem('neste.cfg'));
+            c.places[0].stops = Array.from({length: 60}, (_, i) => ({id: 'NSR:StopPlace:' + (5000 + i), name: 'Stopp ' + i, label: 'Testby', mode: 'bus', walk: 3}));
+            localStorage.setItem('neste.cfg', JSON.stringify(c)) }""")
+        pg.reload(); pg.wait_for_timeout(500)  # utan reiser opnar appen i oppsettet
+        pg.click("[data-act=qr]"); pg.wait_for_timeout(2500)
+        assert "for stort til éin QR-kode" in pg.locator("#dlg").inner_text(), pg.locator("#dlg").inner_text()
+        pg.click("#dlg [data-act=impNo]")
+    pg.click("[data-act=done]"); pg.wait_for_timeout(300)
 
     # Safari på iPhone: rettleiing om appen på Heim-skjermen, og ei anna open fane får med seg importen
     ios = ctx.new_page(); ios.on("pageerror", lambda e: errs.append(str(e)))
