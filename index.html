@@ -49,9 +49,9 @@ main{display:grid;gap:12px}
 .hero .big i{font-style:normal;font-size:.32em;letter-spacing:0;margin-left:6px}
 .hero .s{font-size:16px;font-weight:600}.hero .s b{font-weight:900}
 .hero.none{background:var(--card);color:var(--ink);border:1px solid var(--line)}
-.row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--line)}
+.row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;padding:9px 0;width:100%;background:none;border:0;border-top:1px solid var(--line);text-align:left;color:inherit}
 .row:first-of-type{border-top:0}
-.row.best{box-shadow:inset 4px 0 0 var(--sig);padding-left:10px;margin-left:-10px;border-radius:4px}
+.row.best{box-shadow:inset 4px 0 0 var(--sig);padding-left:10px;margin-left:-10px;width:calc(100% + 10px);border-radius:4px}
 .row.miss{opacity:.45}
 .pill{min-width:44px;height:30px;padding:0 8px;border-radius:9px;display:grid;place-items:center;font-weight:900;font-stretch:112%;color:#fff;background:var(--c)}
 .dest{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -98,6 +98,10 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid 
 #mapc{background:#ccc}
 #map .bot{padding:10px 14px calc(env(safe-area-inset-bottom) + 12px);display:flex;gap:8px;flex-wrap:wrap}
 #map .bot .note{width:100%;margin:0}
+#map[data-mode=follow] .add,#map:not([data-mode=follow]) .fol{display:none}
+#followHead{flex:1;display:flex;gap:8px;align-items:center;font-weight:700;white-space:nowrap;overflow:hidden}
+#followHead b{overflow:hidden;text-overflow:ellipsis}
+.bus-ic .pill{border:2px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,.45)}
 .leaflet-popup-content button{margin-top:6px;height:36px;border-radius:10px;border:0;background:#0e1116;color:#fff;padding:0 12px;font-weight:700}
 .dlg{position:fixed;inset:auto 12px calc(env(safe-area-inset-bottom) + 12px);z-index:200;max-width:520px;margin:0 auto}
 footer{font-size:12px;color:var(--mute);text-align:center;margin-top:18px}
@@ -112,21 +116,22 @@ footer{font-size:12px;color:var(--mute);text-align:center;margin-top:18px}
  <footer>Sanntid frå Entur (NLOD). Grøn prikk = sanntid. Oppsettet ditt blir berre lagra i denne nettlesaren.</footer>
 </div>
 <div id="map" aria-modal="true" role="dialog" aria-label="Kart">
- <div class="top"><span>Legg til i</span><select id="mapPlace"></select><button class="sec" type="button" data-act="mapClose">Ferdig</button></div>
+ <div class="top"><span class="add">Legg til i</span><select class="add" id="mapPlace"></select><div class="fol" id="followHead"></div><button class="sec" type="button" data-act="mapClose">Ferdig</button></div>
  <div id="mapc"></div>
- <div class="bot"><button class="cta" type="button" data-act="mapStops">Vis stopp her</button><button class="sec" type="button" data-act="mapLocate">Min posisjon</button><button class="sec" type="button" data-act="mapHome">Set heimepunkt her</button>
+ <div class="bot"><button class="cta add" type="button" data-act="mapStops">Vis stopp her</button><button class="sec" type="button" data-act="mapLocate">Min posisjon</button><button class="sec add" type="button" data-act="mapHome">Set heimepunkt her</button>
   <p class="note" id="mapNote">Flytt kartet, trykk «Vis stopp her», og trykk på eit stopp for å leggje det til.</p></div>
 </div>
 <div id="dlg" class="dlg"></div>
 <script>
 {
 const CLIENT='lektorodd-neste',JP='https://api.entur.io/journey-planner/v3/graphql',GEO='https://api.entur.io/geocoder/v1/autocomplete';
+const VEH='https://api.entur.io/realtime/v2/vehicles/graphql'; // posisjonar; berre spurt når kartet følgjer ein tur
 const LEAFLET='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
 const MODEC={bus:'var(--bus)',coach:'var(--bus)',tram:'var(--tram)',metro:'var(--tram)',water:'var(--water)',rail:'var(--rail)'};
 const MODE_HEX={bus:'#3a6df0',coach:'#3a6df0',tram:'#19b36b',metro:'#19b36b',water:'#0aa5c2',rail:'#8a5cf6'};
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const hm=d=>d.toLocaleTimeString('nb-NO',{hour:'2-digit',minute:'2-digit'});
+const hm=d=>d.toLocaleTimeString('nb-NO',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Oslo'});
 const uid=()=>Math.random().toString(36).slice(2,9);
 const mins=d=>Math.floor((d-Date.now())/60000);
 const ls={get(k,d){try{const v=localStorage.getItem('neste.'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('neste.'+k,JSON.stringify(v))}catch(e){}}};
@@ -134,31 +139,29 @@ const ls={get(k,d){try{const v=localStorage.getItem('neste.'+k);return v==null?d
 // ---------- tilstand (berre lokalt) ----------
 let cfg=ls.get('cfg',null)||{places:[{id:uid(),name:'Heim',stops:[]}],trips:[]};
 let homePt=ls.get('home',null); // {lat,lon} – blir aldri delt
-let cur=ls.get('cur',null),view='trip',level=0;
-let data=null,err=null,at=null,busy=false;
+let cur=ls.get('cur',null),view='trip';
+let data=null,err=null,at=null,busy=false,shown=[];
 const save=()=>{ls.set('cfg',cfg)};
 const place=id=>cfg.places.find(p=>p.id===id);
 const tripName=t=>`${place(t.from)?.name||'?'} → ${place(t.to)?.name||'?'}`;
 
 // ---------- Entur ----------
-async function post(q){
- const r=await fetch(JP,{method:'POST',headers:{'Content-Type':'application/json','ET-Client-Name':CLIENT},body:JSON.stringify({query:q})});
+async function post(q,url=JP){
+ const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','ET-Client-Name':CLIENT},body:JSON.stringify({query:q})});
  if(!r.ok)throw new Error('Entur svarte '+r.status);return r.json();
 }
-// Tre nivå: fullt, utan belegg, utan foreldre-ID. Fell tilbake om schemaet ikkje har felta.
-const FRAG=[
- 'occupancyStatus quay{stopPlace{id parent{id}}} serviceJourney{id line{publicCode transportMode} estimatedCalls{quay{stopPlace{id name parent{id}}} aimedArrivalTime expectedArrivalTime}}',
- 'quay{stopPlace{id parent{id}}} serviceJourney{id line{publicCode transportMode} estimatedCalls{quay{stopPlace{id name parent{id}}} aimedArrivalTime expectedArrivalTime}}',
- 'quay{stopPlace{id}} serviceJourney{id line{publicCode transportMode} estimatedCalls{quay{stopPlace{id name}} aimedArrivalTime expectedArrivalTime}}'];
-async function gql(body){
- for(;level<FRAG.length;level++){
-  const r=await post(body(FRAG[level]));
-  if(r.data&&!(r.errors&&level<FRAG.length-1))return r.data;
-  if(level===FRAG.length-1)throw new Error(r.errors?.[0]?.message||'Tomt svar');
- }
- throw new Error('Ukjent feil');
+// Sjekka mot Journey Planner v3 25.11.2026. `next` er stoppa etter denne avgangen (rett dato, også over midnatt).
+// Stopp i svaret er barne-stopp (t.d. ein kai); `parent.id` er den ID-en geocoderen og nearest gir.
+const CALL='realtime cancellation forBoarding quay{latitude longitude}aimedDepartureTime expectedDepartureTime occupancyStatus destinationDisplay{frontText} serviceJourney{id line{publicCode transportMode}} serviceJourneyEstimatedCalls{next{forAlighting quay{stopPlace{id parent{id}}} aimedArrivalTime expectedArrivalTime}}';
+async function gql(q){
+ const r=await post(q);
+ if(!r.data)throw new Error(r.errors?.[0]?.message||'Tomt svar');
+ return r.data;
 }
 const ids=sp=>[sp?.id,sp?.parent?.id].filter(Boolean);
+// Fleire kategoriar eller transportmiddel: tog og båt først, buss før trikk (terminalar med bybane).
+const MODES=[['rail',/rail/i],['water',/harbour|ferry|water/i],['metro',/metro/i],['bus',/bus|coach/i],['tram',/tram/i]];
+const pickMode=v=>{const c=[].concat(v||[]).join(' ');return(MODES.find(([,re])=>re.test(c))||['bus'])[0]};
 
 async function load(){
  const t=cfg.trips.find(x=>x.id===cur);
@@ -167,7 +170,7 @@ async function load(){
  if(!A?.stops.length||!B?.stops.length){data=[];err=null;render();return}
  busy=true;$('#status').textContent='Hentar …';
  try{
-  const d=await gql(f=>'{'+A.stops.map((s,i)=>`g${i}:stopPlace(id:${JSON.stringify(s.id)}){estimatedCalls(numberOfDepartures:60,timeRange:86400){realtime cancellation aimedDepartureTime expectedDepartureTime destinationDisplay{frontText} ${f}}}`).join(' ')+'}');
+  const d=await gql('{'+A.stops.map((s,i)=>`g${i}:stopPlace(id:${JSON.stringify(s.id)}){estimatedCalls(numberOfDepartures:60,timeRange:86400){${CALL}}}`).join(' ')+'}');
   if(t.id===cur){data=build(t,A,B,d);err=null;at=new Date()}
  }catch(e){err=e.message||String(e)}
  busy=false;render();
@@ -177,12 +180,12 @@ function build(t,A,B,d){
  const out=new Map();
  A.stops.forEach((s,i)=>{
   for(const c of d['g'+i]?.estimatedCalls||[]){
-   const sj=c.serviceJourney,line=sj.line?.publicCode||'',list=sj.estimatedCalls||[];
+   if(c.forBoarding===false)continue;
+   const sj=c.serviceJourney,line=sj.line?.publicCode||'';
    if(lines.length&&!lines.includes(line.toUpperCase()))continue;
-   const o=list.findIndex(x=>ids(x.quay?.stopPlace).includes(s.id));
-   if(o<0)continue;
    let best=null;
-   for(const x of list.slice(o+1)){
+   for(const x of c.serviceJourneyEstimatedCalls?.next||[]){
+    if(x.forAlighting===false)continue; // t.d. ekspressbussar som berre tek på passasjerar ut av byen
     const tgt=B.stops.find(b=>ids(x.quay?.stopPlace).includes(b.id));
     if(!tgt)continue;
     const arr=new Date(x.expectedArrivalTime||x.aimedArrivalTime);
@@ -192,7 +195,7 @@ function build(t,A,B,d){
    if(!best)continue;
    const dep=new Date(c.expectedDepartureTime),aim=new Date(c.aimedDepartureTime);
    const r={line:line||'–',mode:sj.line?.transportMode||'bus',dest:c.destinationDisplay?.frontText||'',dep,delay:Math.round((dep-aim)/60000),
-    rt:c.realtime,cancel:c.cancellation,occ:c.occupancyStatus,from:s,walk:+s.walk||0,...best};
+    rt:c.realtime,cancel:c.cancellation,occ:c.occupancyStatus,from:s,walk:+s.walk||0,sj:sj.id,quay:c.quay,...best};
    // Same tur frå to av stoppa dine: behald det med mest slakk.
    const k=sj.id+'|'+aim.toISOString().slice(0,10),prev=out.get(k);
    if(!prev||(+r.dep-r.walk*60000)>(+prev.dep-prev.walk*60000))out.set(k,r);
@@ -218,21 +221,21 @@ function tripView(){
  data.forEach(r=>{r.leave=mins(r.dep)-r.walk});
  const ok=data.filter(r=>!r.cancel&&r.leave>=0).sort((a,b)=>a.door-b.door||a.dep-b.dep);
  const best=ok[0];
- const list=data.filter(r=>mins(r.dep)>=0).sort((a,b)=>a.door-b.door||a.dep-b.dep).slice(0,10);
+ const list=shown=data.filter(r=>mins(r.dep)>=0).sort((a,b)=>a.door-b.door||a.dep-b.dep).slice(0,10);
  let h='';
  if(best){
   const go=best.walk?(best.leave===0?'Gå no':'Gå om '+best.leave+'<i>min</i>'):(best.leave===0?'Går no':'Går om '+best.leave+'<i>min</i>');
   h+=`<section class="hero" aria-live="polite"><div class="k">Raskast til ${esc(B.name)}</div><div class="big">${go}</div>
    <div class="s"><b>${esc(best.line)}</b> frå ${esc(best.from.name)} kl. ${esc(hm(best.dep))} · framme <b>${esc(hm(best.door))}</b></div></section>`;
  }else h+=`<section class="hero none"><div class="k">Ingen avgangar du rekk det neste døgeret.</div></section>`;
- h+=`<section class="card"><h2>Sortert etter når du er framme <small>${esc(tripName(t))}</small></h2>${list.length?list.map(r=>{
+ h+=`<section class="card"><h2>Sortert etter når du er framme <small>${esc(tripName(t))}</small></h2>${list.length?list.map((r,i)=>{
   const c=MODEC[r.mode]||'var(--bus)',miss=r.leave<0&&!r.cancel;
-  return`<div class="row ${r===best?'best':''} ${miss?'miss':''} ${r.cancel?'cancel':''}" style="--c:${c}">
+  return`<button type="button" data-row="${i}" class="row ${r===best?'best':''} ${miss?'miss':''} ${r.cancel?'cancel':''}" style="--c:${c}" aria-label="Vis ${esc(r.line)} til ${esc(r.dest)} på kartet">
    <span class="pill">${esc(r.line)}</span>
    <div><div class="dest">${esc(r.cancel?'Innstilt – '+r.dest:r.dest)}</div>
     <div class="sub">${r.rt?'<span class="rt"></span>':''}${esc(r.from.name)} → ${esc(r.to.name)} · framme ${esc(hm(r.door))}${miss?' · rekk han ikkje':''}${occ(r.occ)}</div></div>
-   <div class="when"><div class="min">${minHTML(mins(r.dep),r.dep)}</div><div class="clock">${esc(hm(r.dep))} ${r.delay>=2?`<span class="late">+${r.delay}</span>`:''}</div></div></div>`;
- }).join(''):'<div class="empty">Fann ingen avgangar mellom desse stadane.</div>'}</section>`;
+   <div class="when"><div class="min">${minHTML(mins(r.dep),r.dep)}</div><div class="clock">${esc(hm(r.dep))} ${r.delay>=2?`<span class="late">+${r.delay}</span>`:''}</div></div></button>`;
+ }).join('')+'<p class="note">Trykk på ein avgang for å sjå kvar han er no.</p>':'<div class="empty">Fann ingen avgangar mellom desse stadane.</div>'}</section>`;
  return h;
 }
 
@@ -287,11 +290,10 @@ async function search(inp){
   const j=await r.json();
   const f=(j.features||[]).filter(x=>String(x.properties?.id||'').startsWith('NSR:StopPlace'));
   box.innerHTML=f.length?f.map(x=>{const p=x.properties,[lon,lat]=x.geometry?.coordinates||[];
-   return`<button type="button" data-act="pick" data-id="${esc(p.id)}" data-name="${esc(p.name)}" data-label="${esc(p.label)}" data-lat="${esc(lat)}" data-lon="${esc(lon)}" data-mode="${esc(guessMode(p.category))}">${esc(p.name)}<small>${esc(p.label)}</small></button>`}).join(''):'<p class="empty" style="padding:10px 14px">Ingen treff.</p>';
+   return`<button type="button" data-act="pick" data-id="${esc(p.id)}" data-name="${esc(p.name)}" data-label="${esc(p.label)}" data-lat="${esc(lat)}" data-lon="${esc(lon)}" data-mode="${esc(pickMode(p.category))}">${esc(p.name)}<small>${esc(p.label)}</small></button>`}).join(''):'<p class="empty" style="padding:10px 14px">Ingen treff.</p>';
   box.hidden=false;
  }catch(e){box.innerHTML='<p class="empty" style="padding:10px 14px">Søket feila.</p>';box.hidden=false}
 }
-function guessMode(cat){const c=[].concat(cat||[]).join(' ');return/rail/i.test(c)?'rail':/tram/i.test(c)?'tram':/harbour|ferry|water/i.test(c)?'water':'bus'}
 function walkGuess(lat,lon){
  if(!homePt||lat==null)return 5;
  const R=6371e3,toR=Math.PI/180,dl=(lat-homePt.lat)*toR,dn=(lon-homePt.lon)*toR;
@@ -313,18 +315,71 @@ function loadLeaflet(){
   const s=document.createElement('script');s.src=LEAFLET+'leaflet.min.js';s.onload=ok;s.onerror=()=>no(new Error('Kartet lasta ikkje'));document.head.appendChild(s);
  });
 }
-async function openMap(pid){
- $('#mapPlace').innerHTML=cfg.places.map(p=>`<option value="${esc(p.id)}"${p.id===pid?' selected':''}>${esc(p.name)}</option>`).join('');
- $('#map').classList.add('on');
- try{await loadLeaflet()}catch(e){$('#mapNote').textContent=e.message;return}
+// Opnar kartarket i modus 'add' (legg til stopp) eller 'follow' (følg ein tur). Gir false om Leaflet ikkje lastar.
+async function showMap(mode){
+ stopFollow();
+ const m=$('#map');m.dataset.mode=mode;m.classList.add('on');
+ try{await loadLeaflet()}catch(e){$('#mapNote').textContent=e.message;return false}
  if(!map){
-  const all=cfg.places.flatMap(p=>p.stops).filter(s=>s.lat);
   map=L.map('mapc',{zoomControl:false}).setView(homePt?[homePt.lat,homePt.lon]:[60.39,5.33],homePt?16:12);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
   layer=L.layerGroup().addTo(map);
  }
+ layer.clearLayers();
  setTimeout(()=>map.invalidateSize(),50);
+ return true;
+}
+async function openMap(pid){
+ $('#mapPlace').innerHTML=cfg.places.map(p=>`<option value="${esc(p.id)}"${p.id===pid?' selected':''}>${esc(p.name)}</option>`).join('');
+ $('#mapNote').textContent='Flytt kartet, trykk «Vis stopp her», og trykk på eit stopp for å leggje det til.';
+ if(!await showMap('add'))return;
  drawHome();
+}
+
+// ---------- følg ein tur ----------
+// Spør Entur om posisjonen til éin tur kvart 10. sekund medan kartet er ope. Heimepunktet blir ikkje vist her.
+let follow=null,ft=null,busMk=null,fitted=false;
+function stopFollow(){follow=null;clearTimeout(ft);busMk=null}
+async function openFollow(r){
+ if(!r)return;
+ const hex=MODE_HEX[r.mode]||MODE_HEX.bus;
+ $('#followHead').innerHTML=`<span class="pill" style="--c:${hex}">${esc(r.line)}</span><b>${esc(r.dest)}</b>`;
+ $('#mapNote').textContent='Hentar posisjon …';
+ if(!await showMap('follow'))return;
+ if(homeMk){homeMk.remove();homeMk=null}
+ follow=r;fitted=false;
+ const q=r.quay;
+ if(q?.latitude!=null){
+  L.circleMarker([q.latitude,q.longitude],{radius:9,color:'#0e1116',weight:3,fillColor:'#d7ff3b',fillOpacity:1}).addTo(layer).bindTooltip(r.from.name);
+  map.setView([q.latitude,q.longitude],15);
+ }
+ track();
+}
+function followText(r,v){
+ const m=mins(r.dep),go=m<=0?'Går no':`Går frå ${r.from.name} om ${m} min`;
+ if(!v)return`${go}. Ingen posisjon frå denne turen enno. Mange sender først når turen startar, og nokre (til dømes Bybanen) sender ikkje i det heile.`;
+ const d=Math.round((v.delay||0)/60),age=Math.max(0,Math.round((Date.now()-new Date(v.lastUpdated))/1000));
+ const late=d>=1?`${d} min forseinka`:d<=-1?`${-d} min tidleg`:'i rute';
+ return`${go} · ${late} · posisjon for ${age<60?age+' s':Math.round(age/60)+' min'} sidan`;
+}
+async function track(){
+ clearTimeout(ft);
+ const r=follow;if(!r)return;
+ if(!document.hidden){
+  try{
+   const j=await post(`{vehicles(serviceJourneyId:${JSON.stringify(r.sj)}){location{latitude longitude} delay lastUpdated}}`,VEH);
+   if(r!==follow)return;
+   const v=(j.data?.vehicles||[]).find(x=>x.location?.latitude!=null);
+   if(v){
+    const ll=[v.location.latitude,v.location.longitude];
+    if(busMk)busMk.setLatLng(ll);
+    else busMk=L.marker(ll,{keyboard:false,icon:L.divIcon({className:'bus-ic',html:$('#followHead .pill').outerHTML,iconSize:[48,30],iconAnchor:[24,15]})}).addTo(layer);
+    if(!fitted){fitted=true;const q=r.quay;map.fitBounds(q?.latitude!=null?L.latLngBounds([ll,[q.latitude,q.longitude]]):L.latLngBounds([ll,ll]),{padding:[50,50],maxZoom:16})}
+   }else if(busMk){busMk.remove();busMk=null}
+   $('#mapNote').textContent=followText(r,v);
+  }catch(e){if(r===follow)$('#mapNote').textContent='Fekk ikkje henta posisjon: '+e.message}
+ }
+ if(r===follow)ft=setTimeout(track,10000);
 }
 function drawHome(){
  if(!map)return;if(homeMk){homeMk.remove();homeMk=null}
@@ -337,7 +392,7 @@ async function mapStops(){
   const e=r.data?.nearest?.edges||[];layer.clearLayers();
   for(const {node} of e){
    const p=node.place;if(!p?.id)continue;
-   const mode=[].concat(p.transportMode||'bus')[0]||'bus';
+   const mode=pickMode(p.transportMode); // liste, t.d. ["tram","bus"]
    const m=L.circleMarker([p.latitude,p.longitude],{radius:8,color:'#fff',weight:2,fillColor:MODE_HEX[mode]||'#3a6df0',fillOpacity:1}).addTo(layer);
    const div=document.createElement('div');
    const b=document.createElement('strong');b.textContent=p.name;div.appendChild(b);div.appendChild(document.createElement('br'));
@@ -370,6 +425,8 @@ function checkImport(){
 document.addEventListener('click',async e=>{
  const tb=e.target.closest('[data-trip-id]');
  if(tb){cur=tb.dataset.tripId;ls.set('cur',cur);data=null;err=null;at=null;render();load();return}
+ const rb=e.target.closest('[data-row]');
+ if(rb){openFollow(shown[+rb.dataset.row]);return}
  const b=e.target.closest('[data-act]');if(!b||b.matches('input,select'))return;
  const a=b.dataset.act,pid=b.closest('[data-place]')?.dataset.place,tid=b.closest('[data-trip]')?.dataset.trip,p=place(pid),t=cfg.trips.find(x=>x.id===tid);
  const re=()=>{save();renderSetup()};
@@ -390,7 +447,7 @@ document.addEventListener('click',async e=>{
   case'resetYes':cfg={places:[{id:uid(),name:'Heim',stops:[]}],trips:[]};homePt=null;ls.set('home',null);save();$('#dlg').innerHTML='';renderSetup();break;
   case'impYes':cfg=window._imp;save();$('#dlg').innerHTML='';cur=null;go('trip');break;
   case'impNo':$('#dlg').innerHTML='';break;
-  case'mapClose':$('#map').classList.remove('on');if(view==='setup')renderSetup();break;
+  case'mapClose':stopFollow();$('#map').classList.remove('on');if(view==='setup')renderSetup();break;
   case'mapStops':mapStops();break;
   case'mapLocate':try{navigator.geolocation.getCurrentPosition(x=>map.setView([x.coords.latitude,x.coords.longitude],16),()=>{$('#mapNote').textContent='Fekk ikkje posisjonen.'})}catch(x){}break;
   case'mapHome':{const c=map.getCenter();homePt={lat:+c.lat.toFixed(5),lon:+c.lng.toFixed(5)};ls.set('home',homePt);drawHome();$('#mapNote').textContent='Heimepunkt sett (berre lagra her). Nye stopp får gangtid rekna frå det.'}break;
@@ -408,7 +465,7 @@ document.addEventListener('change',e=>{
 document.addEventListener('input',e=>{if(e.target.dataset.act==='search'){clearTimeout(st);const i=e.target;st=setTimeout(()=>search(i),250)}});
 $('#setup').addEventListener('click',()=>go(view==='trip'?'setup':'trip'));
 $('#status').addEventListener('click',load);
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&(!at||Date.now()-at>20000))load()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)return;if(!at||Date.now()-at>20000)load();if(follow)track()});
 setInterval(()=>{if(!document.hidden)load()},30000);
 setInterval(()=>{if(!document.hidden&&view==='trip'&&data)render()},10000);
 checkImport();
