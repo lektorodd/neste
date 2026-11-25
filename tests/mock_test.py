@@ -3,7 +3,7 @@
 Køyr:  pip install playwright && playwright install chromium
        python tests/mock_test.py
 Skjermbilete hamnar i tests/out/. Testen går gjennom oppsettet
-(søk, legg til stopp, ny stad, reise + retur), reisevisinga,
+(søk, legg til stopp, ny stad, reise + retur), reisevisinga, linjefilteret,
 følgjekartet (Leaflet frå cdnjs; blir hoppa over utan nett), kvar ein
 stad er (stopp i nærleiken med gangtid) og ferjesamband (snu kai, og kai vald etter påfunnen posisjon). Sjekkar òg
 manifest og ikon.
@@ -27,6 +27,8 @@ WALK = {A: 240, B: 360, "NSR:StopPlace:1003": 545, "NSR:StopPlace:1004": 660}
 NEAR = [(A, "Testvik øvre", 200), (B, "Testvik nedre", 350), ("NSR:StopPlace:1003", "Testvik sør", 500)]
 # Påfunne ferjekaiar: barne-stopp 31xx med forelder 30xx, og kvar sin påfunne posisjon.
 KAI = {"NSR:StopPlace:3001": ("Testkai ferjekai", 60.0), "NSR:StopPlace:3002": ("Motkai ferjekai", 60.1)}
+# Påfunne linjer ved stoppa. «1E» finst òg ved eit anna stopp med ein annan ID, som ikkje skal med i filteret.
+LINES = {A: ["1", "X9", "Y9"], B: ["1E"], "NSR:StopPlace:1004": ["1E-anna"]}
 queries = []
 
 def geo(route):
@@ -73,14 +75,20 @@ def jp(route):
         if f"w{i}:trip(" in q:
             sid = q.split(f"w{i}:trip(")[1].split('place:"')[1].split('"')[0]
             d[f"w{i}"] = {"tripPatterns": [{"duration": WALK[sid]}]}
-    if "g0:" not in q and "stopPlace(id:" in q:  # oppslag av ferjesamband frå ein kai
+    for i in range(4):  # linjene ved eit stopp (til linjefilteret)
+        if f"l{i}:stopPlace(" in q:
+            sid = q.split(f'l{i}:stopPlace(id:"')[1].split('"')[0]
+            d[f"l{i}"] = {"quays": [{"lines": [{"id": "T:Line:" + c, "publicCode": c} for c in LINES.get(sid, [])]}]}
+    if q.startswith("{stopPlace(id:"):  # oppslag av ferjesamband frå ein kai
         sid = q.split('stopPlace(id:"')[1].split('"')[0]
         d["stopPlace"] = {"name": KAI[sid][0], "latitude": KAI[sid][1], "longitude": 5.0,
                           "estimatedCalls": [ferry_call(sid, "F1", m) for m in (10, 40)]}
     for i in range(4):
         if f"g{i}:" not in q:
             continue
-        sid = q.split(f'g{i}:stopPlace(id:"')[1].split('"')[0]
+        seg = q.split(f"g{i}:")[1].split("realtime")[0]
+        sid = seg.split('stopPlace(id:"')[1].split('"')[0]
+        only = json.loads(seg.split("lines:")[1].split("}")[0]) if "lines:" in seg else None
         if sid in KAI:  # ferje + ein buss som køyrer med ferja (skal filtrerast bort)
             d[f"g{i}"] = {"estimatedCalls": [ferry_call(sid, "F1", m) for m in (7, 37)] + [ferry_call(sid, "C9", 8, "coach")]}
             continue
@@ -90,6 +98,8 @@ def jp(route):
                       occ="fewSeatsAvailable" if m == 12 else "noData") for m in mins]
         if sid == A:  # skal ikkje visast: set ikkje av i Sentrum / tek ikkje på her
             calls += [call(sid, "X9", 5, 20, alight=False), call(sid, "Y9", 6, 21, board=False)]
+        if only is not None:  # som Entur: berre avgangar med desse line-ID-ane
+            calls = [c for c in calls if "T:Line:" + c["serviceJourney"]["line"]["publicCode"] in only]
         d[f"g{i}"] = {"estimatedCalls": calls}
     route.fulfill(status=200, content_type="application/json", body=json.dumps({"data": d}))
 
@@ -171,6 +181,25 @@ with sync_playwright() as p:
         pg.screenshot(path=str(OUT / "follow.png"))
         pg.click("[data-act=mapClose]"); pg.wait_for_timeout(200)
         assert pg.locator("#map.on").count() == 0
+
+    # Linjefilter på serveren: berre line-ID-ar som går frå stoppa, og stopp utan linja blir ikkje spurde
+    pg.click("#setup"); pg.wait_for_timeout(300)
+    lf = pg.locator(".trip [data-act=tlines]").first
+    lf.fill("1e"); lf.dispatch_event("change"); pg.click("[data-act=done]"); pg.wait_for_timeout(800)
+    assert any("l0:stopPlace(" in x and "quays{lines{id publicCode}}" in x for x in queries), "slo ikkje opp linjene"
+    q = queries[-1]
+    assert 'lines:["T:Line:1E"]' in q and "g1:" in q and "g0:" not in q, q
+    assert pg.locator(".row .pill").all_inner_texts() == ["1E", "1E"], pg.locator(".row .pill").all_inner_texts()
+    n = len(queries); pg.click("#status"); pg.wait_for_timeout(500)
+    assert len(queries) == n + 1, "linjene skal liggje i minnet, ikkje slåast opp på nytt"
+    pg.click("#setup"); pg.wait_for_timeout(300)
+    lf = pg.locator(".trip [data-act=tlines]").first
+    lf.fill("77"); lf.dispatch_event("change"); pg.click("[data-act=done]"); pg.wait_for_timeout(800)
+    assert "Fann ikkje linje 77 ved stoppa i Heim" in pg.locator("#app").inner_text()
+    pg.click("#setup"); pg.wait_for_timeout(300)
+    lf = pg.locator(".trip [data-act=tlines]").first
+    lf.fill(""); lf.dispatch_event("change"); pg.click("[data-act=done]"); pg.wait_for_timeout(800)
+    assert pg.locator(".row").count() == 5 and "filters" not in queries[-1]
 
     # Kvar er staden: søk adresse, få stopp i nærleiken med gangtid frå Entur
     pg.click("#setup"); pg.wait_for_timeout(300)

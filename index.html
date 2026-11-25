@@ -188,6 +188,19 @@ const ids=sp=>[sp?.id,sp?.parent?.id].filter(Boolean);
 const MODES=[['rail',/rail/i],['water',/harbour|ferry|water/i],['metro',/metro/i],['bus',/bus|coach/i],['tram',/tram/i]];
 const pickMode=v=>{const c=[].concat(v||[]).join(' ');return(MODES.find(([,re])=>re.test(c))||['bus'])[0]};
 
+// Linjene som går frå eit stopp, {id,code} per stopp-ID. Berre i minnet. Ein `publicCode` som «40» finst i heile landet,
+// så filteret må byggje på line-ID-ane ved akkurat dette stoppet (quays dekkjer òg barne-stoppa til eit foreldre-stopp).
+const stopLines=new Map();
+async function linesAt(stops){
+ const miss=stops.filter(s=>!stopLines.has(s.id));
+ if(miss.length){
+  const d=await gql('{'+miss.map((s,i)=>`l${i}:stopPlace(id:${JSON.stringify(s.id)}){quays{lines{id publicCode}}}`).join(' ')+'}');
+  miss.forEach((s,i)=>{const m=new Map();for(const q of d['l'+i]?.quays||[])for(const l of q.lines||[])m.set(l.id,String(l.publicCode||'').toUpperCase());
+   stopLines.set(s.id,[...m].map(([id,code])=>({id,code})))});
+ }
+ return stops.map(s=>stopLines.get(s.id)||[]);
+}
+const tripLines=t=>(t.lines||'').split(/[\s,]+/).filter(Boolean).map(s=>s.toUpperCase());
 async function load(){
  const t=cfg.trips.find(x=>x.id===cur);
  if(!t||busy||view!=='trip')return;
@@ -195,8 +208,14 @@ async function load(){
  if(!A?.stops.length||!B?.stops.length){data=[];err=null;render();return}
  busy=true;$('#status').textContent='Hentar …';
  try{
-  const d=await gql('{'+A.stops.map((s,i)=>`g${i}:stopPlace(id:${JSON.stringify(s.id)}){estimatedCalls(numberOfDepartures:60,timeRange:86400${t.ferry?','+WATER:''}){${CALL}}}`).join(' ')+'}');
-  if(t.id===cur&&t.id+t.dir===key){data=build(t,A,B,d);err=null;at=new Date()}
+  // Med linjer: filtrer på serveren, så 60 avgangar er 60 avgangar med desse linjene (ikkje ein halvtime på ein terminal).
+  // Stopp utan nokon av linjene blir ikkje spurde. Feilar oppslaget, hentar vi alt og filtrerer lokalt som før.
+  const want=t.ferry?[]:tripLines(t);let sel=A.stops.map(()=>null);
+  if(want.length)try{sel=(await linesAt(A.stops)).map(ls=>ls.filter(l=>want.includes(l.code)).map(l=>l.id))}catch(e){}
+  const f=(i)=>t.ferry?','+WATER:sel[i]?`,filters:[{select:[{lines:${JSON.stringify(sel[i])}}]}]`:'';
+  const qs=A.stops.map((s,i)=>sel[i]&&!sel[i].length?'':`g${i}:stopPlace(id:${JSON.stringify(s.id)}){estimatedCalls(numberOfDepartures:60,timeRange:86400${f(i)}){${CALL}}}`).filter(Boolean);
+  const d=qs.length?await gql('{'+qs.join(' ')+'}'):{};
+  if(t.id===cur&&t.id+t.dir===key){data=build(t,A,B,d);data.noLines=!qs.length;err=null;at=new Date()}
  }catch(e){err=e.message||String(e)}
  busy=false;
  // Bytte reise eller kai medan vi henta: hent på nytt for det som er valt no.
@@ -204,7 +223,7 @@ async function load(){
  render();
 }
 function build(t,A,B,d){
- const lines=(t.lines||'').split(/[\s,]+/).filter(Boolean).map(s=>s.toUpperCase());
+ const lines=t.ferry?[]:tripLines(t); // òg lokalt, som tryggleik
  const out=new Map();
  A.stops.forEach((s,i)=>{
   for(const c of d['g'+i]?.estimatedCalls||[]){
@@ -266,7 +285,7 @@ function tripView(){
    <div><div class="dest">${esc(r.cancel?'Innstilt – '+r.dest:r.dest)}</div>
     <div class="sub">${r.rt?'<span class="rt"></span>':''}${esc(r.from.name)} → ${esc(r.to.name)} · framme ${esc(hm(r.door))}${miss?' · rekk han ikkje':''}${occ(r.occ)}</div></div>
    <div class="when"><div class="min">${minHTML(mins(r.dep),r.dep)}</div><div class="clock">${esc(hm(r.dep))} ${r.delay>=2?`<span class="late">+${r.delay}</span>`:''}</div></div></button>`;
- }).join('')+'<p class="note">Trykk på ein avgang for å sjå kvar han er no.</p>':'<div class="empty">Fann ingen avgangar mellom desse stadane.</div>'}</section>`;
+ }).join('')+'<p class="note">Trykk på ein avgang for å sjå kvar han er no.</p>':`<div class="empty">${data.noLines?`Fann ikkje linje ${esc(tripLines(t).join(', '))} ved stoppa i ${esc(A.name)}.`:'Fann ingen avgangar mellom desse stadane.'}</div>`}</section>`;
  return h;
 }
 
