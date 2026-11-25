@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="nn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Neste">
+<meta name="theme-color" content="#0e1116">
+<title>Neste</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&display=swap" rel="stylesheet">
+<style>
+/*
+VOICE: kjapp og tørr. Svarar på éin ting: når må eg gå for å vere tidlegast framme.
+IDEA: eit avgangsskilt i lomma, rekna dør til dør.
+PICTURE: den store "Gå om"-tala i ein lime boks; resten er rader.
+COLOUR and TYPE: kveldsmørk grunn, lime signal, kald blå/grøn/sjøblå per transportmiddel. Archivo breitt og tungt for tal.
+LAYOUT: éi kolonne, reiser som brikker øvst, oppsett som eige ark.
+*/
+:root{color-scheme:dark light;
+ --bg:light-dark(#eef0f3,#0e1116);--card:light-dark(#fff,#171b22);--line:light-dark(#d8dce2,#262c36);
+ --ink:light-dark(#0e1116,#f1f3f6);--mute:light-dark(#5a6472,#8b95a4);--field:light-dark(#f4f6f8,#0e1116);
+ --sig:#d7ff3b;--bus:#3a6df0;--tram:#19b36b;--water:#0aa5c2;--rail:#8a5cf6;--warn:#f5b400;--bad:#ff4d6a}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0;margin:0}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--ink);font:16px/1.4 Archivo,system-ui,sans-serif;overflow-x:clip;
+ padding:calc(env(safe-area-inset-top) + 12px) 14px calc(env(safe-area-inset-bottom) + 40px)}
+.wrap{max-width:640px;margin:0 auto}
+header{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:4px 2px 12px}
+h1{font-size:34px;font-weight:900;font-stretch:125%;letter-spacing:-.02em;line-height:1}
+.hbtn{display:flex;gap:6px;align-items:center}
+button{font:inherit;color:inherit;cursor:pointer}
+.ghost{background:none;border:1px solid var(--line);border-radius:999px;height:40px;padding:0 14px;font-weight:600;font-size:14px;color:var(--ink)}
+#status{border:0;color:var(--mute);font-size:13px;padding:0 6px}
+#status b{color:var(--ink)}
+.chips{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 12px;scrollbar-width:none}
+.chips button{flex:none;height:42px;padding:0 16px;border-radius:999px;border:1px solid var(--line);background:var(--card);font-weight:700;font-size:15px;white-space:nowrap}
+.chips button[aria-pressed=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+main{display:grid;gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:14px 16px}
+.card h2{font-size:15px;font-weight:700;margin-bottom:6px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.card h2 small{font-weight:400;color:var(--mute);font-size:13px}
+.hero{background:var(--sig);color:#0e1116;border-radius:24px;padding:18px 18px 16px}
+.hero .k{font-size:14px;font-weight:600}
+.hero .big{font-size:clamp(48px,15vw,84px);font-weight:900;font-stretch:125%;line-height:.92;letter-spacing:-.03em;margin:6px 0 8px;font-variant-numeric:tabular-nums}
+.hero .big i{font-style:normal;font-size:.32em;letter-spacing:0;margin-left:6px}
+.hero .s{font-size:16px;font-weight:600}.hero .s b{font-weight:900}
+.hero.none{background:var(--card);color:var(--ink);border:1px solid var(--line)}
+.row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;padding:9px 0;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.row.best{box-shadow:inset 4px 0 0 var(--sig);padding-left:10px;margin-left:-10px;border-radius:4px}
+.row.miss{opacity:.45}
+.pill{min-width:44px;height:30px;padding:0 8px;border-radius:9px;display:grid;place-items:center;font-weight:900;font-stretch:112%;color:#fff;background:var(--c)}
+.dest{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sub{font-size:13px;color:var(--mute)}.sub .rt,.sub .occ{margin-right:6px;vertical-align:middle}
+.when{text-align:right;white-space:nowrap}
+.min{font-size:26px;font-weight:900;font-stretch:118%;line-height:1;font-variant-numeric:tabular-nums}
+.min i{font-style:normal;font-size:14px;font-weight:600;margin-left:2px;color:var(--mute)}
+.clock{font-size:13px;color:var(--mute);font-variant-numeric:tabular-nums}
+.late{color:var(--warn);font-weight:700}
+.cancel .dest{text-decoration:line-through;color:var(--bad)}
+.rt{width:8px;height:8px;border-radius:50%;background:var(--tram);display:inline-block;animation:p 1.6s infinite}
+@keyframes p{50%{opacity:.25}}
+.occ{display:inline-flex;gap:2px;align-items:flex-end;height:12px}
+.occ span{width:4px;border-radius:1px;background:var(--line)}
+.occ span:nth-child(1){height:5px}.occ span:nth-child(2){height:8px}.occ span:nth-child(3){height:12px}
+.occ.o1 span:nth-child(1),.occ.o2 span:nth-child(-n+2){background:var(--tram)}.occ.o3 span{background:var(--bad)}
+.empty{color:var(--mute);font-size:14px;padding:6px 0}
+.cta{height:48px;border-radius:14px;border:0;background:var(--ink);color:var(--bg);font-weight:800;padding:0 18px;font-size:16px}
+.sec{background:none;border:1px solid var(--line);border-radius:12px;height:44px;padding:0 14px;font-weight:600}
+.x{background:none;border:0;width:44px;height:44px;color:var(--mute);font-size:22px;line-height:1}
+input,select{font:500 16px Archivo,sans-serif;color:var(--ink);background:var(--field);border:1px solid var(--line);border-radius:12px;height:44px;padding:0 12px;width:100%}
+input.n{width:64px;text-align:center;padding:0 6px}
+input.name{font-weight:800;font-size:18px;background:none;border-color:transparent;padding-left:0}
+input.name:focus{border-color:var(--line);padding-left:12px}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--bus);outline-offset:2px}
+.stop{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line)}
+.dot{width:12px;height:12px;border-radius:50%;background:var(--c,var(--mute))}
+.stop small{color:var(--mute);font-size:13px}
+.srch{position:relative;margin-top:8px}
+.res{position:absolute;left:0;right:0;top:48px;z-index:20;background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 12px 30px rgba(0,0,0,.3)}
+.res button{display:block;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);padding:11px 14px}
+.res button:first-child{border-top:0}
+.res small{color:var(--mute);display:block;font-size:13px}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.trip{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto;gap:8px;align-items:center}
+.trip+.trip{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.trip .l{grid-column:1/4}
+.trip .arrow{color:var(--mute);font-weight:800}
+.note{font-size:13px;color:var(--mute);margin-top:6px}
+#map{position:fixed;inset:0;z-index:100;background:var(--bg);display:none;grid-template-rows:auto minmax(0,1fr) auto}
+#map.on{display:grid}
+#map .top{padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;display:flex;gap:8px;align-items:center}
+#map .top select{flex:1}
+#mapc{background:#ccc}
+#map .bot{padding:10px 14px calc(env(safe-area-inset-bottom) + 12px);display:flex;gap:8px;flex-wrap:wrap}
+#map .bot .note{width:100%;margin:0}
+.leaflet-popup-content button{margin-top:6px;height:36px;border-radius:10px;border:0;background:#0e1116;color:#fff;padding:0 12px;font-weight:700}
+.dlg{position:fixed;inset:auto 12px calc(env(safe-area-inset-bottom) + 12px);z-index:200;max-width:520px;margin:0 auto}
+footer{font-size:12px;color:var(--mute);text-align:center;margin-top:18px}
+@media(prefers-reduced-motion:reduce){.rt{animation:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+ <header><h1>Neste</h1><div class="hbtn"><button id="status" class="ghost" type="button" aria-label="Oppdater no">…</button><button id="setup" class="ghost" type="button">Oppsett</button></div></header>
+ <nav class="chips" id="chips" aria-label="Reiser"></nav>
+ <main id="app"></main>
+ <footer>Sanntid frå Entur (NLOD). Grøn prikk = sanntid. Oppsettet ditt blir berre lagra i denne nettlesaren.</footer>
+</div>
+<div id="map" aria-modal="true" role="dialog" aria-label="Kart">
+ <div class="top"><span>Legg til i</span><select id="mapPlace"></select><button class="sec" type="button" data-act="mapClose">Ferdig</button></div>
+ <div id="mapc"></div>
+ <div class="bot"><button class="cta" type="button" data-act="mapStops">Vis stopp her</button><button class="sec" type="button" data-act="mapLocate">Min posisjon</button><button class="sec" type="button" data-act="mapHome">Set heimepunkt her</button>
+  <p class="note" id="mapNote">Flytt kartet, trykk «Vis stopp her», og trykk på eit stopp for å leggje det til.</p></div>
+</div>
+<div id="dlg" class="dlg"></div>
+<script>
+{
+const CLIENT='lektorodd-neste',JP='https://api.entur.io/journey-planner/v3/graphql',GEO='https://api.entur.io/geocoder/v1/autocomplete';
+const LEAFLET='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
+const MODEC={bus:'var(--bus)',coach:'var(--bus)',tram:'var(--tram)',metro:'var(--tram)',water:'var(--water)',rail:'var(--rail)'};
+const MODE_HEX={bus:'#3a6df0',coach:'#3a6df0',tram:'#19b36b',metro:'#19b36b',water:'#0aa5c2',rail:'#8a5cf6'};
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const hm=d=>d.toLocaleTimeString('nb-NO',{hour:'2-digit',minute:'2-digit'});
+const uid=()=>Math.random().toString(36).slice(2,9);
+const mins=d=>Math.floor((d-Date.now())/60000);
+const ls={get(k,d){try{const v=localStorage.getItem('neste.'+k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem('neste.'+k,JSON.stringify(v))}catch(e){}}};
+
+// ---------- tilstand (berre lokalt) ----------
+let cfg=ls.get('cfg',null)||{places:[{id:uid(),name:'Heim',stops:[]}],trips:[]};
+let homePt=ls.get('home',null); // {lat,lon} – blir aldri delt
+let cur=ls.get('cur',null),view='trip',level=0;
+let data=null,err=null,at=null,busy=false;
+const save=()=>{ls.set('cfg',cfg)};
+const place=id=>cfg.places.find(p=>p.id===id);
+const tripName=t=>`${place(t.from)?.name||'?'} → ${place(t.to)?.name||'?'}`;
+
+// ---------- Entur ----------
+async function post(q){
+ const r=await fetch(JP,{method:'POST',headers:{'Content-Type':'application/json','ET-Client-Name':CLIENT},body:JSON.stringify({query:q})});
+ if(!r.ok)throw new Error('Entur svarte '+r.status);return r.json();
+}
+// Tre nivå: fullt, utan belegg, utan foreldre-ID. Fell tilbake om schemaet ikkje har felta.
+const FRAG=[
+ 'occupancyStatus quay{stopPlace{id parent{id}}} serviceJourney{id line{publicCode transportMode} estimatedCalls{quay{stopPlace{id name parent{id}}} aimedArrivalTime expectedArrivalTime}}',
+ 'quay{stopPlace{id parent{id}}} serviceJourney{id line{publicCode transportMode} estimatedCalls{quay{stopPlace{id name parent{id}}} aimedArrivalTime expectedArrivalTime}}',
+ 'quay{stopPlace{id}} serviceJourney{id line{publicCode transportMode} estimatedCalls{quay{stopPlace{id name}} aimedArrivalTime expectedArrivalTime}}'];
+async function gql(body){
+ for(;level<FRAG.length;level++){
+  const r=await post(body(FRAG[level]));
+  if(r.data&&!(r.errors&&level<FRAG.length-1))return r.data;
+  if(level===FRAG.length-1)throw new Error(r.errors?.[0]?.message||'Tomt svar');
+ }
+ throw new Error('Ukjent feil');
+}
+const ids=sp=>[sp?.id,sp?.parent?.id].filter(Boolean);
+
+async function load(){
+ const t=cfg.trips.find(x=>x.id===cur);
+ if(!t||busy||view!=='trip')return;
+ const A=place(t.from),B=place(t.to);
+ if(!A?.stops.length||!B?.stops.length){data=[];err=null;render();return}
+ busy=true;$('#status').textContent='Hentar …';
+ try{
+  const d=await gql(f=>'{'+A.stops.map((s,i)=>`g${i}:stopPlace(id:${JSON.stringify(s.id)}){estimatedCalls(numberOfDepartures:60,timeRange:86400){realtime cancellation aimedDepartureTime expectedDepartureTime destinationDisplay{frontText} ${f}}}`).join(' ')+'}');
+  if(t.id===cur){data=build(t,A,B,d);err=null;at=new Date()}
+ }catch(e){err=e.message||String(e)}
+ busy=false;render();
+}
+function build(t,A,B,d){
+ const lines=(t.lines||'').split(/[\s,]+/).filter(Boolean).map(s=>s.toUpperCase());
+ const out=new Map();
+ A.stops.forEach((s,i)=>{
+  for(const c of d['g'+i]?.estimatedCalls||[]){
+   const sj=c.serviceJourney,line=sj.line?.publicCode||'',list=sj.estimatedCalls||[];
+   if(lines.length&&!lines.includes(line.toUpperCase()))continue;
+   const o=list.findIndex(x=>ids(x.quay?.stopPlace).includes(s.id));
+   if(o<0)continue;
+   let best=null;
+   for(const x of list.slice(o+1)){
+    const tgt=B.stops.find(b=>ids(x.quay?.stopPlace).includes(b.id));
+    if(!tgt)continue;
+    const arr=new Date(x.expectedArrivalTime||x.aimedArrivalTime);
+    const door=new Date(+arr+(+tgt.walk||0)*60000);
+    if(!best||door<best.door)best={arr,door,to:tgt};
+   }
+   if(!best)continue;
+   const dep=new Date(c.expectedDepartureTime),aim=new Date(c.aimedDepartureTime);
+   const r={line:line||'–',mode:sj.line?.transportMode||'bus',dest:c.destinationDisplay?.frontText||'',dep,delay:Math.round((dep-aim)/60000),
+    rt:c.realtime,cancel:c.cancellation,occ:c.occupancyStatus,from:s,walk:+s.walk||0,...best};
+   // Same tur frå to av stoppa dine: behald det med mest slakk.
+   const k=sj.id+'|'+aim.toISOString().slice(0,10),prev=out.get(k);
+   if(!prev||(+r.dep-r.walk*60000)>(+prev.dep-prev.walk*60000))out.set(k,r);
+  }
+ });
+ return[...out.values()];
+}
+
+// ---------- reisevising ----------
+function occ(o){
+ if(!o||o==='noData')return'';
+ const l=/empty|many/i.test(o)?1:/few/i.test(o)?2:3,t=['','God plass','Litt fullt','Fullt'][l];
+ return`<span class="occ o${l}" title="${t}" aria-label="${t}"><span></span><span></span><span></span></span>`;
+}
+function minHTML(m,d){return m<=0?'Nå':m>=60?esc(hm(d)):m+'<i>min</i>'}
+function tripView(){
+ const t=cfg.trips.find(x=>x.id===cur);
+ if(!t)return`<section class="card"><h2>Kom i gang</h2><p class="empty">Lag ein stad (til dømes «Heim») med stoppa du brukar, ein stad til, og ei reise mellom dei.</p><div class="btns"><button class="cta" type="button" data-act="openSetup">Set opp</button></div></section>`;
+ const A=place(t.from),B=place(t.to);
+ if(!A?.stops.length||!B?.stops.length)return`<section class="card"><h2>${esc(tripName(t))}</h2><p class="empty">Begge stadane treng minst eitt stopp.</p><div class="btns"><button class="cta" type="button" data-act="openSetup">Opne oppsett</button></div></section>`;
+ if(err&&!data)return`<section class="card"><h2>Fekk ikkje kontakt med Entur</h2><p class="empty">${esc(err)}</p></section>`;
+ if(!data)return'';
+ data.forEach(r=>{r.leave=mins(r.dep)-r.walk});
+ const ok=data.filter(r=>!r.cancel&&r.leave>=0).sort((a,b)=>a.door-b.door||a.dep-b.dep);
+ const best=ok[0];
+ const list=data.filter(r=>mins(r.dep)>=0).sort((a,b)=>a.door-b.door||a.dep-b.dep).slice(0,10);
+ let h='';
+ if(best){
+  const go=best.walk?(best.leave===0?'Gå no':'Gå om '+best.leave+'<i>min</i>'):(best.leave===0?'Går no':'Går om '+best.leave+'<i>min</i>');
+  h+=`<section class="hero" aria-live="polite"><div class="k">Raskast til ${esc(B.name)}</div><div class="big">${go}</div>
+   <div class="s"><b>${esc(best.line)}</b> frå ${esc(best.from.name)} kl. ${esc(hm(best.dep))} · framme <b>${esc(hm(best.door))}</b></div></section>`;
+ }else h+=`<section class="hero none"><div class="k">Ingen avgangar du rekk det neste døgeret.</div></section>`;
+ h+=`<section class="card"><h2>Sortert etter når du er framme <small>${esc(tripName(t))}</small></h2>${list.length?list.map(r=>{
+  const c=MODEC[r.mode]||'var(--bus)',miss=r.leave<0&&!r.cancel;
+  return`<div class="row ${r===best?'best':''} ${miss?'miss':''} ${r.cancel?'cancel':''}" style="--c:${c}">
+   <span class="pill">${esc(r.line)}</span>
+   <div><div class="dest">${esc(r.cancel?'Innstilt – '+r.dest:r.dest)}</div>
+    <div class="sub">${r.rt?'<span class="rt"></span>':''}${esc(r.from.name)} → ${esc(r.to.name)} · framme ${esc(hm(r.door))}${miss?' · rekk han ikkje':''}${occ(r.occ)}</div></div>
+   <div class="when"><div class="min">${minHTML(mins(r.dep),r.dep)}</div><div class="clock">${esc(hm(r.dep))} ${r.delay>=2?`<span class="late">+${r.delay}</span>`:''}</div></div></div>`;
+ }).join(''):'<div class="empty">Fann ingen avgangar mellom desse stadane.</div>'}</section>`;
+ return h;
+}
+
+// ---------- oppsett ----------
+function setupView(){
+ const opts=sel=>cfg.places.map(p=>`<option value="${esc(p.id)}"${p.id===sel?' selected':''}>${esc(p.name)}</option>`).join('');
+ return`<section class="card"><h2>Stader <small>ein stad = stoppa du brukar der, med gangtid</small></h2></section>
+ ${cfg.places.map(p=>`<section class="card" data-place="${esc(p.id)}">
+  <div style="display:flex;gap:8px;align-items:center"><input class="name" value="${esc(p.name)}" data-act="pname" aria-label="Namn på stad"><button class="x" type="button" data-act="pdel" aria-label="Slett stad">×</button></div>
+  ${p.stops.map((s,i)=>`<div class="stop" style="--c:${MODEC[s.mode]||'var(--mute)'}"><span class="dot"></span><div><div>${esc(s.name)}</div><small>${esc(s.label||'')}</small></div>
+   <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--mute)"><input class="n" type="number" inputmode="numeric" min="0" max="60" value="${esc(s.walk)}" data-act="walk" data-i="${i}" aria-label="Gangtid i minutt"> min</label>
+   <button class="x" type="button" data-act="sdel" data-i="${i}" aria-label="Fjern stopp">×</button></div>`).join('')||'<p class="empty">Ingen stopp enno.</p>'}
+  <div class="srch"><input type="search" placeholder="Søk etter stopp, kai eller stasjon" data-act="search" autocomplete="off" enterkeyhint="search"><div class="res" hidden></div></div>
+  <div class="btns"><button class="sec" type="button" data-act="openMap">Finn på kart</button></div></section>`).join('')}
+ <div class="btns" style="margin:0"><button class="sec" type="button" data-act="padd">+ Ny stad</button></div>
+ <section class="card"><h2>Reiser</h2>
+  ${cfg.trips.map(t=>`<div class="trip" data-trip="${esc(t.id)}"><select data-act="tfrom" aria-label="Frå">${opts(t.from)}</select><span class="arrow">→</span><select data-act="tto" aria-label="Til">${opts(t.to)}</select>
+   <button class="x" type="button" data-act="tdel" aria-label="Slett reise">×</button>
+   <input class="l" placeholder="Berre linjer (valfritt), t.d. 40, 40E" value="${esc(t.lines||'')}" data-act="tlines">
+   <button class="sec" type="button" data-act="trev" title="Lag retur">⇄</button></div>`).join('')||'<p class="empty">Ingen reiser enno.</p>'}
+  <div class="btns"><button class="sec" type="button" data-act="tadd"${cfg.places.length<2?' disabled':''}>+ Ny reise</button></div>
+  ${cfg.places.length<2?'<p class="note">Du treng minst to stader for å lage ei reise.</p>':''}</section>
+ <section class="card"><h2>Heimepunkt <small>valfritt</small></h2>
+  <p class="note">Set eit punkt på kartet, så føreslår appen gangtid når du legg til stopp. Punktet blir berre lagra her og er aldri med i delingslenka. ${homePt?'<b>Punktet er sett.</b>':''}</p>
+  <div class="btns">${homePt?'<button class="sec" type="button" data-act="homeDel">Fjern heimepunkt</button>':''}</div></section>
+ <section class="card"><h2>Del med familien</h2>
+  <p class="note">Lenka inneheld stadane, stoppa og reisene dine, men ikkje heimepunktet. Opnar nokon lenka, kan dei importere oppsettet.</p>
+  <div class="btns"><button class="cta" type="button" data-act="share">Kopier delingslenke</button><button class="sec" type="button" data-act="reset">Nullstill</button></div></section>
+ <div class="btns" style="margin:0 0 20px"><button class="cta" type="button" data-act="done">Ferdig</button></div>`;
+}
+
+// ---------- render ----------
+function render(){
+ const chips=$('#chips');
+ chips.innerHTML=view==='trip'?cfg.trips.map(t=>`<button type="button" data-trip-id="${esc(t.id)}" aria-pressed="${t.id===cur}">${esc(tripName(t))}</button>`).join(''):'';
+ chips.hidden=view!=='trip'||!cfg.trips.length;
+ if(view==='trip')$('#app').innerHTML=tripView();
+ $('#setup').textContent=view==='trip'?'Oppsett':'Ferdig';
+ $('#status').hidden=view!=='trip'||!cur;
+ $('#status').innerHTML=err?'<b>Feil</b> · prøv igjen':at?`<b>${esc(hm(at))}</b>`:'…';
+}
+function renderSetup(){$('#app').innerHTML=setupView();render()}
+function go(v){view=v;if(v==='setup'){renderSetup()}else{if(!cfg.trips.find(t=>t.id===cur))cur=cfg.trips[0]?.id||null;ls.set('cur',cur);data=null;render();load()}}
+
+// ---------- søk ----------
+let st=null;
+async function search(inp){
+ const q=inp.value.trim(),box=inp.nextElementSibling;
+ if(q.length<2){box.hidden=true;return}
+ try{
+  const r=await fetch(`${GEO}?text=${encodeURIComponent(q)}&layers=venue&size=8&lang=no`,{headers:{'ET-Client-Name':CLIENT}});
+  const j=await r.json();
+  const f=(j.features||[]).filter(x=>String(x.properties?.id||'').startsWith('NSR:StopPlace'));
+  box.innerHTML=f.length?f.map(x=>{const p=x.properties,[lon,lat]=x.geometry?.coordinates||[];
+   return`<button type="button" data-act="pick" data-id="${esc(p.id)}" data-name="${esc(p.name)}" data-label="${esc(p.label)}" data-lat="${esc(lat)}" data-lon="${esc(lon)}" data-mode="${esc(guessMode(p.category))}">${esc(p.name)}<small>${esc(p.label)}</small></button>`}).join(''):'<p class="empty" style="padding:10px 14px">Ingen treff.</p>';
+  box.hidden=false;
+ }catch(e){box.innerHTML='<p class="empty" style="padding:10px 14px">Søket feila.</p>';box.hidden=false}
+}
+function guessMode(cat){const c=[].concat(cat||[]).join(' ');return/rail/i.test(c)?'rail':/tram/i.test(c)?'tram':/harbour|ferry|water/i.test(c)?'water':'bus'}
+function walkGuess(lat,lon){
+ if(!homePt||lat==null)return 5;
+ const R=6371e3,toR=Math.PI/180,dl=(lat-homePt.lat)*toR,dn=(lon-homePt.lon)*toR;
+ const a=Math.sin(dl/2)**2+Math.cos(lat*toR)*Math.cos(homePt.lat*toR)*Math.sin(dn/2)**2;
+ const m=2*R*Math.asin(Math.sqrt(a))*1.3; // omveg-faktor
+ return Math.max(1,Math.round(m/80));
+}
+function addStop(pid,s){
+ const p=place(pid);if(!p||p.stops.some(x=>x.id===s.id))return;
+ p.stops.push({id:s.id,name:s.name,label:s.label||'',mode:s.mode||'bus',walk:walkGuess(+s.lat,+s.lon)});save();
+}
+
+// ---------- kart ----------
+let map=null,layer=null,homeMk=null;
+function loadLeaflet(){
+ return new Promise((ok,no)=>{
+  if(window.L)return ok();
+  const c=document.createElement('link');c.rel='stylesheet';c.href=LEAFLET+'leaflet.min.css';document.head.appendChild(c);
+  const s=document.createElement('script');s.src=LEAFLET+'leaflet.min.js';s.onload=ok;s.onerror=()=>no(new Error('Kartet lasta ikkje'));document.head.appendChild(s);
+ });
+}
+async function openMap(pid){
+ $('#mapPlace').innerHTML=cfg.places.map(p=>`<option value="${esc(p.id)}"${p.id===pid?' selected':''}>${esc(p.name)}</option>`).join('');
+ $('#map').classList.add('on');
+ try{await loadLeaflet()}catch(e){$('#mapNote').textContent=e.message;return}
+ if(!map){
+  const all=cfg.places.flatMap(p=>p.stops).filter(s=>s.lat);
+  map=L.map('mapc',{zoomControl:false}).setView(homePt?[homePt.lat,homePt.lon]:[60.39,5.33],homePt?16:12);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+  layer=L.layerGroup().addTo(map);
+ }
+ setTimeout(()=>map.invalidateSize(),50);
+ drawHome();
+}
+function drawHome(){
+ if(!map)return;if(homeMk){homeMk.remove();homeMk=null}
+ if(homePt)homeMk=L.circleMarker([homePt.lat,homePt.lon],{radius:9,color:'#0e1116',weight:3,fillColor:'#d7ff3b',fillOpacity:1}).addTo(map).bindTooltip('Heimepunkt');
+}
+async function mapStops(){
+ const c=map.getCenter();$('#mapNote').textContent='Hentar stopp …';
+ try{
+  const r=await post(`{nearest(latitude:${c.lat.toFixed(5)},longitude:${c.lng.toFixed(5)},maximumDistance:1200,maximumResults:60,filterByPlaceTypes:[stopPlace]){edges{node{distance place{...on StopPlace{id name latitude longitude transportMode}}}}}}`);
+  const e=r.data?.nearest?.edges||[];layer.clearLayers();
+  for(const {node} of e){
+   const p=node.place;if(!p?.id)continue;
+   const mode=[].concat(p.transportMode||'bus')[0]||'bus';
+   const m=L.circleMarker([p.latitude,p.longitude],{radius:8,color:'#fff',weight:2,fillColor:MODE_HEX[mode]||'#3a6df0',fillOpacity:1}).addTo(layer);
+   const div=document.createElement('div');
+   const b=document.createElement('strong');b.textContent=p.name;div.appendChild(b);div.appendChild(document.createElement('br'));
+   const btn=document.createElement('button');btn.type='button';btn.textContent='Legg til';
+   btn.onclick=()=>{addStop($('#mapPlace').value,{id:p.id,name:p.name,label:'',mode,lat:p.latitude,lon:p.longitude});btn.textContent='Lagt til ✓';btn.disabled=true};
+   div.appendChild(btn);m.bindPopup(div);
+  }
+  $('#mapNote').textContent=e.length?`${e.length} stopp. Trykk på eit for å leggje det til.`:'Ingen stopp her. Flytt kartet og prøv igjen.';
+ }catch(x){$('#mapNote').textContent='Fekk ikkje henta stopp: '+x.message}
+}
+
+// ---------- deling ----------
+const b64e=s=>btoa(unescape(encodeURIComponent(s))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+const b64d=s=>decodeURIComponent(escape(atob(s.replace(/-/g,'+').replace(/_/g,'/'))));
+function shareLink(){return location.href.split('#')[0]+'#oppsett='+b64e(JSON.stringify({p:cfg.places,t:cfg.trips}))}
+function dialog(html){$('#dlg').innerHTML=`<section class="card" style="box-shadow:0 14px 40px rgba(0,0,0,.35)">${html}</section>`}
+function checkImport(){
+ const m=location.hash.match(/^#oppsett=(.+)$/);if(!m)return;
+ try{
+  const o=JSON.parse(b64d(m[1]));
+  if(!Array.isArray(o.p)||!Array.isArray(o.t))throw 0;
+  window._imp={places:o.p.map(p=>({id:String(p.id),name:String(p.name),stops:(p.stops||[]).map(s=>({id:String(s.id),name:String(s.name),label:String(s.label||''),mode:String(s.mode||'bus'),walk:+s.walk||0}))})),
+   trips:o.t.map(t=>({id:String(t.id),from:String(t.from),to:String(t.to),lines:String(t.lines||'')}))};
+  dialog(`<h2>Importere oppsett?</h2><p class="note">${window._imp.places.length} stader og ${window._imp.trips.length} reiser. Dette erstattar oppsettet ditt her.</p><div class="btns"><button class="cta" type="button" data-act="impYes">Importer</button><button class="sec" type="button" data-act="impNo">Avbryt</button></div>`);
+ }catch(e){dialog('<h2>Lenka var øydelagd</h2><div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div>')}
+ history.replaceState(null,'',location.pathname+location.search);
+}
+
+// ---------- hendingar ----------
+document.addEventListener('click',async e=>{
+ const tb=e.target.closest('[data-trip-id]');
+ if(tb){cur=tb.dataset.tripId;ls.set('cur',cur);data=null;err=null;at=null;render();load();return}
+ const b=e.target.closest('[data-act]');if(!b||b.matches('input,select'))return;
+ const a=b.dataset.act,pid=b.closest('[data-place]')?.dataset.place,tid=b.closest('[data-trip]')?.dataset.trip,p=place(pid),t=cfg.trips.find(x=>x.id===tid);
+ const re=()=>{save();renderSetup()};
+ switch(a){
+  case'openSetup':go('setup');break;
+  case'done':go('trip');break;
+  case'padd':cfg.places.push({id:uid(),name:'Ny stad',stops:[]});re();break;
+  case'pdel':if(cfg.trips.some(x=>x.from===pid||x.to===pid)){dialog(`<h2>Staden er i bruk</h2><p class="note">Slett reisene som brukar «${esc(p.name)}» først.</p><div class="btns"><button class="sec" type="button" data-act="impNo">OK</button></div>`)}else{cfg.places=cfg.places.filter(x=>x.id!==pid);re()}break;
+  case'sdel':p.stops.splice(+b.dataset.i,1);re();break;
+  case'pick':addStop(pid,b.dataset);re();break;
+  case'openMap':openMap(pid);break;
+  case'tadd':cfg.trips.push({id:uid(),from:cfg.places[0].id,to:cfg.places[1].id,lines:''});re();break;
+  case'tdel':cfg.trips=cfg.trips.filter(x=>x!==t);re();break;
+  case'trev':cfg.trips.push({id:uid(),from:t.to,to:t.from,lines:t.lines});re();break;
+  case'homeDel':homePt=null;ls.set('home',null);re();break;
+  case'share':try{await navigator.clipboard.writeText(shareLink());b.textContent='Kopiert ✓'}catch(x){dialog(`<h2>Kopier lenka</h2><input readonly value="${esc(shareLink())}" onfocus="this.select()"><div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div>`)}break;
+  case'reset':dialog('<h2>Nullstille alt?</h2><p class="note">Alle stader, reiser og heimepunktet blir sletta frå denne eininga.</p><div class="btns"><button class="cta" type="button" data-act="resetYes">Nullstill</button><button class="sec" type="button" data-act="impNo">Avbryt</button></div>');break;
+  case'resetYes':cfg={places:[{id:uid(),name:'Heim',stops:[]}],trips:[]};homePt=null;ls.set('home',null);save();$('#dlg').innerHTML='';renderSetup();break;
+  case'impYes':cfg=window._imp;save();$('#dlg').innerHTML='';cur=null;go('trip');break;
+  case'impNo':$('#dlg').innerHTML='';break;
+  case'mapClose':$('#map').classList.remove('on');if(view==='setup')renderSetup();break;
+  case'mapStops':mapStops();break;
+  case'mapLocate':try{navigator.geolocation.getCurrentPosition(x=>map.setView([x.coords.latitude,x.coords.longitude],16),()=>{$('#mapNote').textContent='Fekk ikkje posisjonen.'})}catch(x){}break;
+  case'mapHome':{const c=map.getCenter();homePt={lat:+c.lat.toFixed(5),lon:+c.lng.toFixed(5)};ls.set('home',homePt);drawHome();$('#mapNote').textContent='Heimepunkt sett (berre lagra her). Nye stopp får gangtid rekna frå det.'}break;
+ }
+});
+document.addEventListener('change',e=>{
+ const el=e.target,a=el.dataset.act;if(!a)return;
+ const p=place(el.closest('[data-place]')?.dataset.place),t=cfg.trips.find(x=>x.id===el.closest('[data-trip]')?.dataset.trip);
+ if(a==='pname'){p.name=el.value.trim()||'Utan namn';save()}
+ else if(a==='walk'){p.stops[+el.dataset.i].walk=Math.max(0,Math.min(60,+el.value||0));save()}
+ else if(a==='tfrom'){t.from=el.value;save()}
+ else if(a==='tto'){t.to=el.value;save()}
+ else if(a==='tlines'){t.lines=el.value;save()}
+});
+document.addEventListener('input',e=>{if(e.target.dataset.act==='search'){clearTimeout(st);const i=e.target;st=setTimeout(()=>search(i),250)}});
+$('#setup').addEventListener('click',()=>go(view==='trip'?'setup':'trip'));
+$('#status').addEventListener('click',load);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&(!at||Date.now()-at>20000))load()});
+setInterval(()=>{if(!document.hidden)load()},30000);
+setInterval(()=>{if(!document.hidden&&view==='trip'&&data)render()},10000);
+checkImport();
+go(cfg.trips.length?'trip':'setup');
+}
+</script>
+</body>
+</html>
