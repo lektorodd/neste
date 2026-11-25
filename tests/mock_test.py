@@ -7,7 +7,8 @@ Skjermbilete hamnar i tests/out/. Testen går gjennom oppsettet
 minste bytetid, linjefilter på første tur, mellomlagring),
 følgjekartet (Leaflet frå cdnjs; blir hoppa over utan nett), kvar ein
 stad er (stopp i nærleiken med gangtid), ferjesamband (snu kai, og kai vald etter påfunnen posisjon) og
-reise vald etter påfunnen posisjon (sist brukte reise frå staden, ikkje overstyre eit nytt val), kort delingslenke
+reise vald etter påfunnen posisjon (sist brukte reise frå staden, eit eige val står til du er ved ein annan
+stad, kort venting på posisjonen og melding når reisa blir bytt etterpå), kort delingslenke
 (komprimert, gamle lenker, utan CompressionStream/DecompressionStream) og QR-skannaren (falskt kamera med påfunnen
 QR-kode; BarcodeDetector påfunnen, html5-qrcode frå cdnjs blir hoppa over utan nett). Sjekkar òg
 manifest og ikon.
@@ -469,6 +470,7 @@ with sync_playwright() as p:
     pg.reload(); pg.wait_for_timeout(1200)
     assert cur() == "tf", "skulle opne den sist brukte reisa frå Heim"
     assert "vald etter posisjonen din" in pg.locator(".hero .k").inner_text(), pg.locator(".hero .k").inner_text()
+    assert pg.locator(".switched").count() == 0, "posisjonen kom i tide: ingen melding om bytte"
     pg.screenshot(path=str(OUT / "auto_reise.png"))
     pg.locator("#chips button", has_text="Heim → Sentrum").first.click(); pg.wait_for_timeout(300)  # brukaren vel sjølv
     hs = cur()
@@ -477,11 +479,17 @@ with sync_playwright() as p:
     bg = """m => { Object.defineProperty(document, 'hidden', {configurable: true, get: () => window._h});
         window._h = true; document.dispatchEvent(new Event('visibilitychange'));
         const n = Date.now; Date.now = () => n() + m * 60000; window._h = false; document.dispatchEvent(new Event('visibilitychange')) }"""
+    held = pg.evaluate("JSON.parse(localStorage.getItem('neste.held'))")
+    assert held["where"].startswith("p:") and set(held) == {"at", "where"}, held
+    ctx.set_geolocation({"latitude": 61.0013, "longitude": 5.0007})  # framleis heime
+    pg.evaluate(bg, 30); pg.wait_for_timeout(800)
+    assert cur() == hs, "eit eige val skal stå så lenge du er ved same stad"
+    ctx.set_geolocation({"latitude": 61.5004, "longitude": 5.0})  # ved «Sentrum»
+    pg.evaluate("() => new Promise(r => navigator.geolocation.getCurrentPosition(r, r, {maximumAge: 0}))")  # telefonen får ny posisjon
     pg.evaluate(bg, 3); pg.wait_for_timeout(800)
-    assert cur() == hs, "eit val brukaren nett gjorde skal ikkje overstyrast"
-    pg.evaluate(bg, 11); pg.wait_for_timeout(800)
     sh = pg.evaluate("(c => c.trips.find(t => t.from === c.places[1].id).id)(JSON.parse(localStorage.getItem('neste.cfg')))")
-    assert cur() == sh, "etter lang tid i bakgrunnen skal reisa veljast etter posisjonen"
+    assert cur() == sh, "ved ein annan stad skal reisa veljast etter posisjonen"
+    assert pg.evaluate("localStorage.getItem('neste.held')") == "null", "valet skal sleppast når du er ved ein annan stad"
     stored = pg.evaluate("JSON.stringify(Object.assign({}, localStorage))")
     assert "61.0013" not in stored and "61.5004" not in stored and "5.0007" not in stored, "posisjonen vart lagra"
     assert "brukt" not in pg.evaluate("localStorage.getItem('neste.cfg')"), "bruken skal ikkje i oppsettet (delingslenka)"
@@ -489,6 +497,28 @@ with sync_playwright() as p:
     assert cur() == hs, "heime igjen: den sist brukte reisa frå Heim er no den brukaren valde"
     ctx.set_geolocation({"latitude": 63.0, "longitude": 9.0}); pg.reload(); pg.wait_for_timeout(1000)  # langt frå alt
     assert cur() == hs and "posisjonen din" not in pg.locator("#app").inner_text(), "utan stad i nærleiken skal appen gjere som før"
+    # Eit eige val går ut etter AUTO_HOLD sjølv om du er ved same stad
+    ctx.set_geolocation({"latitude": 61.0013, "longitude": 5.0007}); pg.reload(); pg.wait_for_timeout(1000)
+    pg.locator("#chips button", has_text="Heim → Sentrum").first.click(); pg.wait_for_timeout(300)
+    assert pg.evaluate("JSON.parse(localStorage.getItem('neste.held'))")["where"].startswith("p:")
+    pg.evaluate(bg, 361); pg.wait_for_timeout(800)
+    assert pg.evaluate("localStorage.getItem('neste.held')") == "null", "valet skal gå ut etter 6 timar"
+    # Treg posisjon: «Finn reisa di …» først, så lista etter AUTO_WAIT, så bytte med forklaring når posisjonen kjem
+    pg.evaluate("id => localStorage.setItem('neste.cur', JSON.stringify(id))", hs)
+    slow = ctx.new_page(); slow.on("pageerror", lambda e: errs.append(str(e)))
+    slow.route("**/journey-planner/**", jp)
+    slow.add_init_script("""Object.defineProperty(navigator.geolocation, 'getCurrentPosition', {value: ok =>
+        setTimeout(() => ok({coords: {latitude: 61.5004, longitude: 5.0}}), 2600)})""")  # påfunnen, ved «Sentrum»
+    slow.goto((ROOT / "index.html").as_uri()); slow.wait_for_timeout(600)
+    assert "Finn reisa di" in slow.locator("#app").inner_text(), slow.locator("#app").inner_text()[:200]
+    slow.wait_for_timeout(1300)
+    assert slow.locator(".hero .big").count() == 1, "lista skal visast etter AUTO_WAIT"
+    assert slow.evaluate("JSON.parse(localStorage.getItem('neste.cur'))") == hs
+    slow.wait_for_timeout(1500)
+    assert slow.evaluate("JSON.parse(localStorage.getItem('neste.cur'))") == sh, "seint svar skal framleis velje reise"
+    msg = slow.locator(".switched").inner_text()
+    assert "Bytte til" in msg and "du er ved" in msg, msg
+    slow.screenshot(path=str(OUT / "auto_bytte.png")); slow.close()
     # Den gamle innstillinga berre for kai blir flytta til den nye
     pg.evaluate("() => { localStorage.setItem('neste.autoside', 'true'); localStorage.removeItem('neste.auto') }")
     pg.reload(); pg.wait_for_timeout(500)

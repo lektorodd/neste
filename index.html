@@ -50,6 +50,7 @@ main{display:grid;gap:12px}
 .hero{background:var(--sig);color:#0e1116;border-radius:24px;padding:18px 18px 16px}
 .hero .k{font-size:14px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:8px}
 .hero .k small{font-weight:500;opacity:.75;font-size:13px}
+.switched{background:var(--card);border:1px solid var(--sig);border-radius:14px;padding:10px 14px;font-size:14px;font-weight:600}
 .flip{flex:none;border:0;border-radius:999px;height:38px;padding:0 14px;font-weight:800;font-size:14px;background:#0e1116;color:var(--sig)}
 .hero.none .flip{background:var(--ink);color:var(--bg)}
 .chk{display:flex;gap:10px;align-items:center;margin-top:10px;font-size:14px}
@@ -181,9 +182,23 @@ let data=null,err=null,at=null,busy=false,shown=[],autoBy='';
 // Vel reise og kai etter posisjonen: éi lokal innstilling ('auto'). Den gamle innstillinga berre for kai ('autoside') blir flytta hit.
 {const o=ls.get('autoside',null);if(o!=null){if(ls.get('auto',null)==null)ls.set('auto',!!o);try{localStorage.removeItem('neste.autoside')}catch(e){}}}
 const AUTO_NEAR=1200;   // m: så nær punktet for ein stad (eller ein ferjekai) må du vere for at appen vel reise frå han
-const AUTO_KEEP=600000; // ms: eit val du sjølv gjorde i denne økta blir ikkje overstyrt av posisjonen før det har gått så lenge
+const AUTO_HOLD=6*3600e3; // ms: eit val du gjorde sjølv står til du er ved ein annan stad, men aldri lenger enn dette
+const AUTO_WAIT=1500;     // ms: så lenge ventar appen på posisjonen ved opning før han viser lista
 // Når kvar reise sist vart vald (reise-ID -> ms). Berre lokalt, ikkje i cfg og difor aldri i delingslenka.
 let used=ls.get('brukt',{}),pickedAt=0;
+// Eige val: {at, where}. where er staden du var ved («p:<stad>», «k:<kai>», «ingen» eller «?»), aldri koordinatar.
+let held=ls.get('held',null),hereKey=null,posWait=0,switchMsg='',switchUntil=0;
+const placeKey=n=>n?(n.place?'p:'+n.place:'k:'+n.kai):'ingen';
+function hold(){
+ pickedAt=Date.now();
+ if(!ls.get('auto',false))return;
+ held={at:Date.now(),where:hereKey||'?'};ls.set('held',held);
+ // Veit vi ikkje kvar du er, finn det ut no (berre kva stad, ikkje posisjonen).
+ if(!hereKey&&navigator.geolocation)navigator.geolocation.getCurrentPosition(q=>{
+  hereKey=placeKey(nearest(q.coords.latitude,q.coords.longitude));
+  if(held&&held.where==='?'){held.where=hereKey;ls.set('held',held)}
+ },()=>{},{maximumAge:300000,timeout:10000});
+}
 const touch=id=>{used[id]=Date.now();ls.set('brukt',used)};
 const byPos=t=>autoBy===t.id+(t.ferry?t.dir:'');
 const save=()=>{ls.set('cfg',cfg)};
@@ -361,6 +376,7 @@ function occ(o){
 function minHTML(m,d){return m<=0?'Nå':m>=60?esc(hm(d)):m+'<i>min</i>'}
 function tripView(){
  const t=cfg.trips.find(x=>x.id===cur);
+ if(t&&posWait>Date.now())return'<section class="hero none" aria-live="polite"><div class="k"><span>Finn reisa di …</span></div></section>';
  if(!t)return`<section class="card"><h2>Kom i gang</h2><p class="empty">Lag ein stad (til dømes «Heim») med stoppa du brukar, ein stad til, og ei reise mellom dei. Skal du berre ta ferja, legg til eit ferjesamband.</p><div class="btns"><button class="cta" type="button" data-act="openSetup">Set opp</button><button class="sec" type="button" data-act="ferry">+ Ferjesamband</button></div></section>`;
  const [A,B]=ends(t);
  const flip=t.ferry?'<button class="flip" type="button" data-act="flip" aria-label="Snu: vis ferjer frå andre sida">⇄ Snu</button>':'';
@@ -372,7 +388,7 @@ function tripView(){
  const ok=data.filter(r=>!r.cancel&&r.leave>=0).sort((a,b)=>a.door-b.door||a.dep-b.dep);
  const best=ok[0];
  const list=shown=data.filter(r=>mins(r.dep)>=0).sort((a,b)=>a.door-b.door||a.dep-b.dep).slice(0,10);
- let h='';
+ let h=Date.now()<switchUntil?`<p class="switched" role="status">${esc(switchMsg)}</p>`:'';
  if(best){
   const go=best.walk?(best.leave===0?'Gå no':'Gå om '+best.leave+'<i>min</i>'):(best.leave===0?'Går no':'Går om '+best.leave+'<i>min</i>');
   h+=`<section class="hero" aria-live="polite"><div class="k"><span>${kk}</span>${flip}</div><div class="big">${go}</div>
@@ -438,7 +454,7 @@ function setupView(){
   <div class="btns"><button class="sec" type="button" data-act="ferry">+ Ferjesamband</button></div></section>
  ${cfg.trips.length?`<section class="card"><h2>Opne etter kvar du er</h2>
   <label class="chk"><input type="checkbox" data-act="auto"${ls.get('auto',false)?' checked':''}> Vel reise og kai etter kvar eg er</label>
-  <p class="note">Når du opnar appen, eller kjem tilbake til han etter meir enn 2 min, samanliknar han posisjonen din med punkta for stadene og med ferjekaiane. Er du innan ${String(AUTO_NEAR/1000).replace('.',',')} km frå ein av dei, opnar reisa frå den staden som du brukte sist, og for ferjesamband kaien du er ved. Elles opnar det du såg på sist. Posisjonen blir berre samanlikna på denne eininga og blir ikkje lagra eller sendt nokon stad.</p>
+  <p class="note">Når du opnar appen, eller kjem tilbake til han etter meir enn 2 min, samanliknar han posisjonen din med punkta for stadene og med ferjekaiane. Er du innan ${String(AUTO_NEAR/1000).replace('.',',')} km frå ein av dei, opnar reisa frå den staden som du brukte sist, og for ferjesamband kaien du er ved. Elles opnar det du såg på sist. Vel du ei anna reise sjølv, står valet til du er ved ein annan stad, men høgst ${AUTO_HOLD/3600e3} timar. Posisjonen blir berre samanlikna på denne eininga og blir ikkje lagra eller sendt nokon stad. Appen hugsar berre kva stad du var ved då du valde.</p>
   ${!Object.keys(pts).length&&!fer.length?'<p class="note">Ingen stader har punkt enno. Vel «Kvar er staden?» på staden du vil kjennast att ved.</p>':''}</section>`:''}
  ${cfg.trips.length>1?`<section class="card" id="order"><h2>Rekkjefølgje <small>slik reisene står øvst</small></h2>
   ${cfg.trips.map((t,i)=>`<div class="ord" data-trip="${esc(t.id)}"><span class="num">${i+1}</span><span>${esc(tripName(t))}</span>
@@ -530,7 +546,7 @@ function ferryMake(o){
  const key=[fFrom.id,o.id].sort().join();
  let t=cfg.trips.find(x=>x.ferry&&[x.ferry.a.id,x.ferry.b.id].sort().join()===key);
  if(!t){t={id:uid(),ferry:{a:fEnd(fFrom),b:fEnd(o)},dir:'ab'};cfg.trips.push(t)}
- save();$('#dlg').innerHTML='';cur=t.id;touch(t.id);pickedAt=Date.now();go('trip');
+ save();$('#dlg').innerHTML='';cur=t.id;touch(t.id);hold();go('trip');
 }
 // Vel reise og kai etter posisjonen. Posisjonen blir berre samanlikna her og aldri lagra eller sendt.
 // full: ved opning og etter 2 min i bakgrunnen; finn næraste stad (punkt) eller ferjekai innan AUTO_NEAR og vel den sist brukte
@@ -551,20 +567,35 @@ function tripAt(n){ // den sist brukte reisa frå staden eller kaien; utan bruk:
 }
 function autoPick(full){
  if(!ls.get('auto',false)||!navigator.geolocation)return;
- if(full&&Date.now()-pickedAt<AUTO_KEEP)return; // du valde sjølv nett no
  const t0=cfg.trips.find(x=>x.id===cur),mark=pickedAt;
  if(!full&&!t0?.ferry)return;
+ // Ved opning: vent kort på posisjonen (han blir henta medan avgangane blir henta), så lista ikkje hoppar.
+ if(full){posWait=Date.now()+AUTO_WAIT;setTimeout(()=>{if(posWait&&Date.now()>=posWait){posWait=0;render()}},AUTO_WAIT+20)}
+ const done=()=>{if(posWait){posWait=0;render()}};
  navigator.geolocation.getCurrentPosition(p=>{
-  if(pickedAt!==mark||view!=='trip')return; // du har valt sjølv medan vi venta på posisjonen
-  const {latitude:la,longitude:lo}=p.coords,n=full&&nearest(la,lo),hit=n&&tripAt(n);
+  const late=full&&!posWait;posWait=0; // late: lista er alt vist
+  if(pickedAt!==mark||view!=='trip'){render();return} // du har valt sjølv medan vi venta
+  const {latitude:la,longitude:lo}=p.coords,n=nearest(la,lo);hereKey=placeKey(n);
+  // Eit eige val står så lenge du er ved same stad (og ikkje lenger enn AUTO_HOLD).
+  const keep=full&&held&&Date.now()-held.at<AUTO_HOLD&&(held.where==='?'||held.where===hereKey);
+  if(full&&held&&!keep){held=null;ls.set('held',null)}
+  if(keep){render();return}
+  const hit=full&&n&&tripAt(n);
   let t=cfg.trips.find(x=>x.id===cur),dir=t?.dir;
   if(hit){t=hit.t;dir=hit.dir}
   else if(t?.ferry&&t.ferry.a.lat!=null&&t.ferry.b.lat!=null){const {a,b}=t.ferry;dir=dist(la,lo,a.lat,a.lon)<=dist(la,lo,b.lat,b.lon)?'ab':'ba'}
-  else return;
+  else{render();return}
   autoBy=t.id+(t.ferry?dir:'');
-  if(t.id!==cur||(t.ferry&&dir!==t.dir)){if(t.ferry&&dir!==t.dir){t.dir=dir;save()}cur=t.id;ls.set('cur',cur);data=null;err=null;at=null;render();load()}
-  else render();
- },()=>{},{maximumAge:full?0:120000,timeout:10000}); // ved opning: fersk posisjon, du kan ha flytta deg
+  const moved=t.id!==cur||(t.ferry&&dir!==t.dir);
+  if(moved){
+   if(t.ferry&&dir!==t.dir){t.dir=dir;save()}
+   if(late){ // forklar hoppet
+    const where=n?.place?place(n.place)?.name:n?.kai?'kaien':'';
+    switchMsg=`Bytte til ${tripName(t)}${where?`: du er ved ${where}`:''}.`;switchUntil=Date.now()+8000;setTimeout(render,8100);
+   }
+   cur=t.id;ls.set('cur',cur);data=null;err=null;at=null;render();load();
+  }else render();
+ },done,{maximumAge:Math.min(120000,Date.now()-hiddenAt),timeout:10000}); // mellomlagra posisjon berre om han er nyare enn då appen gjekk i bakgrunnen, og høgst 2 min
 }
 function addStop(pid,s){
  const p=place(pid);if(!p||p.stops.some(x=>x.id===s.id))return;
@@ -864,7 +895,7 @@ function syncFromStorage(){
 // ---------- hendingar ----------
 document.addEventListener('click',async e=>{
  const tb=e.target.closest('[data-trip-id]');
- if(tb){cur=tb.dataset.tripId;ls.set('cur',cur);touch(cur);pickedAt=Date.now();autoBy='';data=null;err=null;at=null;render();load();autoPick(false);return}
+ if(tb){cur=tb.dataset.tripId;ls.set('cur',cur);touch(cur);hold();autoBy='';data=null;err=null;at=null;render();load();autoPick(false);return}
  const rb=e.target.closest('[data-row]');
  if(rb){openFollow(shown[+rb.dataset.row]);return}
  const b=e.target.closest('[data-act]');if(!b||b.matches('input,select'))return;
@@ -881,7 +912,7 @@ document.addEventListener('click',async e=>{
   case'fpick':ferryFrom(b.dataset);break;
   case'froute':ferryMake(fTo[+b.dataset.i]);break;
   case'sit':sitDialog(b.dataset.n);break;
-  case'flip':{const f=cfg.trips.find(x=>x.id===cur);if(!f?.ferry)break;f.dir=f.dir==='ba'?'ab':'ba';autoBy='';touch(f.id);pickedAt=Date.now();save();data=null;err=null;render();load()}break;
+  case'flip':{const f=cfg.trips.find(x=>x.id===cur);if(!f?.ferry)break;f.dir=f.dir==='ba'?'ab':'ba';autoBy='';touch(f.id);hold();save();data=null;err=null;render();load()}break;
   case'openMap':openMap(pid);break;
   case'tadd':cfg.trips.push({id:uid(),from:cfg.places[0].id,to:cfg.places[1].id,lines:''});re();break;
   case'tup':case'tdown':{const i=cfg.trips.indexOf(t),j=i+(a==='tup'?-1:1);if(i<0||j<0||j>=cfg.trips.length)break;
@@ -902,7 +933,7 @@ document.addEventListener('click',async e=>{
    if(navigator.share){try{await navigator.share({title:'Neste',text:'Oppsettet mitt i Neste. Opne lenka, eller lim ho inn under Oppsett → «Opne delingslenke».',url})}catch(x){}break}
    try{await navigator.clipboard.writeText(url);b.textContent='Kopiert ✓'}catch(x){dialog(`<h2>Kopier lenka</h2><input readonly value="${esc(url)}" onfocus="this.select()"><div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div>`)}}break;
   case'reset':dialog('<h2>Nullstille alt?</h2><p class="note">Alle stader, reiser og punkta for stadene blir sletta frå denne eininga.</p><div class="btns"><button class="cta" type="button" data-act="resetYes">Nullstill</button><button class="sec" type="button" data-act="impNo">Avbryt</button></div>');break;
-  case'resetYes':cfg={places:[{id:uid(),name:'Heim',stops:[]}],trips:[]};pts={};savePts();save();$('#dlg').innerHTML='';renderSetup();break;
+  case'resetYes':cfg={places:[{id:uid(),name:'Heim',stops:[]}],trips:[]};pts={};savePts();held=null;ls.set('held',null);save();$('#dlg').innerHTML='';renderSetup();break;
   case'qr':qrDialog();break;
   case'paste':pasteDialog();$('#impTxt').focus();break;
   case'impPaste':tryPaste($('#impTxt').value);break;
