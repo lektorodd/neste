@@ -50,6 +50,7 @@ main{display:grid;gap:12px}
 .hero{background:var(--sig);color:#0e1116;border-radius:24px;padding:18px 18px 16px}
 .hero .k{font-size:14px;font-weight:600;display:flex;justify-content:space-between;align-items:center;gap:8px}
 .hero .k small{font-weight:500;opacity:.75;font-size:13px}
+.switched{background:var(--card);border:1px solid var(--sig);border-radius:14px;padding:10px 14px;font-size:14px;font-weight:600}
 .flip{flex:none;border:0;border-radius:999px;height:38px;padding:0 14px;font-weight:800;font-size:14px;background:#0e1116;color:var(--sig)}
 .hero.none .flip{background:var(--ink);color:var(--bg)}
 .chk{display:flex;gap:10px;align-items:center;margin-top:10px;font-size:14px}
@@ -128,6 +129,8 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid 
 .ord{display:grid;grid-template-columns:24px minmax(0,1fr) auto auto;gap:4px;align-items:center;border-top:1px solid var(--line);font-weight:600}.ord:first-of-type{border-top:0}
 .ord .num{color:var(--mute);font-variant-numeric:tabular-nums;font-size:14px}.ord span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .x:disabled{opacity:.25;cursor:default}
+.scan{background:#000;border-radius:14px;overflow:hidden;aspect-ratio:1;margin:10px auto;width:min(100%,340px)}
+.scan video{width:100%!important;height:100%!important;object-fit:cover;display:block}
 .qr{background:#fff;border-radius:14px;padding:6px;margin:10px auto;width:min(100%,340px)}.qr svg{display:block;width:100%;height:auto}
 .pills{display:grid;gap:3px}
 .avb .wi,.sit .wi{margin:0}.sitx{margin:8px 0;white-space:pre-line}.dlg a{color:var(--bus)}
@@ -156,6 +159,9 @@ const VEH='https://api.entur.io/realtime/v2/vehicles/graphql'; // posisjonar; be
 const LEAFLET='https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
 // QR-kodar (kazuhikoarase/qrcode-generator, MIT, 20 kB). Berre lasta når nokon opnar QR-koden.
 const QRLIB={src:'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js',sri:'sha384-mZT2gIty7ZDdOGkxfP6joZcYdMW1Jvj9dRlfpTmaJAKKXTqzygtB22k7FLe+KZC1'};
+// QR-lesar (mebjas/html5-qrcode 2.3.8, Apache-2.0, 375 kB). Berre lasta når skannaren blir opna i ein nettlesar utan
+// BarcodeDetector (t.d. Safari på iPhone). Chrome på Android les QR-kodar sjølv, og då blir ingenting lasta ned.
+const SCANLIB={src:'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js',sri:'sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+'};
 const MODEC={bus:'var(--bus)',coach:'var(--bus)',tram:'var(--tram)',metro:'var(--tram)',water:'var(--water)',rail:'var(--rail)'};
 const MODE_HEX={bus:'#3a6df0',coach:'#3a6df0',tram:'#19b36b',metro:'#19b36b',water:'#0aa5c2',rail:'#8a5cf6'};
 const $=s=>document.querySelector(s);
@@ -173,6 +179,28 @@ let pts=ls.get('pts',{});
 const savePts=()=>ls.set('pts',pts);
 let cur=ls.get('cur',null),view='trip';
 let data=null,err=null,at=null,busy=false,shown=[],autoBy='';
+// Vel reise og kai etter posisjonen: éi lokal innstilling ('auto'). Den gamle innstillinga berre for kai ('autoside') blir flytta hit.
+{const o=ls.get('autoside',null);if(o!=null){if(ls.get('auto',null)==null)ls.set('auto',!!o);try{localStorage.removeItem('neste.autoside')}catch(e){}}}
+const AUTO_NEAR=1200;   // m: så nær punktet for ein stad (eller ein ferjekai) må du vere for at appen vel reise frå han
+const AUTO_HOLD=6*3600e3; // ms: eit val du gjorde sjølv står til du er ved ein annan stad, men aldri lenger enn dette
+const AUTO_WAIT=1500;     // ms: så lenge ventar appen på posisjonen ved opning før han viser lista
+// Når kvar reise sist vart vald (reise-ID -> ms). Berre lokalt, ikkje i cfg og difor aldri i delingslenka.
+let used=ls.get('brukt',{}),pickedAt=0;
+// Eige val: {at, where}. where er staden du var ved («p:<stad>», «k:<kai>», «ingen» eller «?»), aldri koordinatar.
+let held=ls.get('held',null),hereKey=null,posWait=0,switchMsg='',switchUntil=0;
+const placeKey=n=>n?(n.place?'p:'+n.place:'k:'+n.kai):'ingen';
+function hold(){
+ pickedAt=Date.now();
+ if(!ls.get('auto',false))return;
+ held={at:Date.now(),where:hereKey||'?'};ls.set('held',held);
+ // Veit vi ikkje kvar du er, finn det ut no (berre kva stad, ikkje posisjonen).
+ if(!hereKey&&navigator.geolocation)navigator.geolocation.getCurrentPosition(q=>{
+  hereKey=placeKey(nearest(q.coords.latitude,q.coords.longitude));
+  if(held&&held.where==='?'){held.where=hereKey;ls.set('held',held)}
+ },()=>{},{maximumAge:300000,timeout:10000});
+}
+const touch=id=>{used[id]=Date.now();ls.set('brukt',used)};
+const byPos=t=>autoBy===t.id+(t.ferry?t.dir:'');
 const save=()=>{ls.set('cfg',cfg)};
 const place=id=>cfg.places.find(p=>p.id===id);
 const tripName=t=>t.ferry?`${t.ferry.a.name} ⇄ ${t.ferry.b.name}`:`${place(t.from)?.name||'?'} → ${place(t.to)?.name||'?'}`;
@@ -235,11 +263,19 @@ async function load(){
   if(want.length)try{sel=(await linesAt(A.stops)).map(ls=>ls.filter(l=>want.includes(l.code)).map(l=>l.id))}catch(e){}
   const f=(i)=>t.ferry?','+WATER:sel[i]?`,filters:[{select:[{lines:${JSON.stringify(sel[i])}}]}]`:'';
   const qs=A.stops.map((s,i)=>sel[i]&&!sel[i].length?'':`g${i}:stopPlace(id:${JSON.stringify(s.id)}){estimatedCalls(numberOfDepartures:60,timeRange:86400${f(i)}){${CALL}}}`).filter(Boolean);
+  // Reiser med eitt bytte: same tid som avgangane, men frå mellomlageret når det er ferskt (sjå XFER_TTL).
+  const xp=!t.ferry&&qs.length?xferRows(t,A,B,want):null;
   const d=qs.length?await gql('{'+qs.join(' ')+'}'):{};
   let rows=build(t,A,B,d);
-  // Ingen direkte avgang du rekk (og ikkje linjefilter): leit etter reiser med eitt bytte. Feilar det, blir det som før.
-  if(!t.ferry&&!want.length&&!rows.some(r=>!r.cancel&&mins(r.dep)-r.walk>=0)&&t.id===cur)
-   try{const x=await transfers(A,B);rows=rows.concat(x);rows.xfer=x.length>0;rows.tried=true}catch(e){}
+  const x=xp?await xp:null;
+  if(x){
+   // Ta bort bytte som i praksis er ein direkte tur (bussen du går på, går sjølv til målet), og bytte der ein direkte
+   // avgang går like seint eller seinare frå staden og er framme like tidleg eller tidlegare (i heile minutt, som på skjermen).
+   const sjs=new Set(rows.map(r=>r.sj)),live=rows.filter(r=>!r.cancel),M=d=>Math.floor(+d/60000),lv=r=>M(r.dep)-r.walk;
+   const keep=x.filter(r=>!sjs.has(r.sj)&&!live.some(d=>lv(d)>=lv(r)&&M(d.door)<=M(r.door)));
+   const direct=rows.some(r=>!r.cancel&&mins(r.dep)-r.walk>=0);
+   rows=rows.concat(keep);rows.xfer=keep.length>0&&!direct;rows.tried=true;
+  }
   rows.noLines=!qs.length;
   if(t.id===cur&&t.id+t.dir===key){data=rows;err=null;at=new Date()}
  }catch(e){err=e.message||String(e)}
@@ -279,19 +315,43 @@ function build(t,A,B,d){
  return[...out.values()];
 }
 
-// Overgangar, første versjon. Journey Planner `trip` frå kvart frå-stopp til kvart til-stopp (maks 9 par i éin spørjing),
-// med start når du er ved stoppet. Berre turar med nøyaktig eitt bytte som startar og sluttar med kollektiv, sidan
-// gangtida til og frå stoppa er den du har sett. `maximumTransfers:1` gir ingen turar hos Entur (25.11.2026), så vi ber om 2 og filtrerer.
-const LEG='mode aimedStartTime expectedStartTime expectedEndTime realtime fromPlace{name quay{latitude longitude}} toPlace{name} line{publicCode transportMode} serviceJourney{id} fromEstimatedCall{destinationDisplay{frontText} cancellation} situations{situationNumber summary{value language}}';
-async function transfers(A,B){
+// Overgangar. Journey Planner `trip` frå kvart frå-stopp til kvart til-stopp (maks 9 par i éin spørjing), med start når du
+// er ved stoppet. Berre turar med nøyaktig eitt bytte som startar og sluttar med kollektiv, sidan gangtida til og frå stoppa
+// er den du har sett. `maximumTransfers:1` gir ingen turar hos Entur (25.11.2026), så vi ber om 2 og filtrerer.
+// Bytte blir viste saman med direkte avgangar, sorterte etter når du er framme. Linjefilteret gjeld berre første tur.
+const XFER_WAIT=3;      // min: minste ventetid når du byter (etter eventuell gange mellom plattformer eller stopp)
+const XFER_WALK_MIN=5;  // min: minste tid frå ankomst til avgang når du må gå til eit anna stopp
+const XFER_TTL=140000;  // ms: bytte-søket blir mellomlagra per reise; med oppdatering kvart 30. sekund blir det søkt på nytt kvart 2,5 min
+const LEG='mode aimedStartTime expectedStartTime expectedEndTime realtime fromPlace{name quay{latitude longitude stopPlace{id parent{id}}}} toPlace{name quay{stopPlace{id parent{id}}}} line{publicCode transportMode} serviceJourney{id} fromEstimatedCall{destinationDisplay{frontText} cancellation} situations{situationNumber summary{value language}} interchangeTo{staySeated}';
+const xcache=new Map(); // reise + stopp + linjer -> {at, rows (Promise)}
+function xferRows(t,A,B,want){
+ const k=[t.id,A.stops.map(s=>s.id+':'+s.walk),B.stops.map(s=>s.id+':'+s.walk),want].join('|'),c=xcache.get(k);
+ if(c&&Date.now()-c.at<XFER_TTL)return c.rows;
+ const rows=transfers(A,B,want).catch(()=>null); // feilar det, blir det som før (berre direkte avgangar)
+ xcache.set(k,{at:Date.now(),rows});
+ return rows;
+}
+// Held bytet? Same stoppestad: minst XFER_WAIT min etter eventuell gange. Anna stopp: gangtid + XFER_WAIT, og minst XFER_WALK_MIN.
+function xferOK(L,i,j){
+ const gap=(new Date(L[j].expectedStartTime)-new Date(L[i].expectedEndTime))/60000;
+ const walk=L.slice(i+1,j).reduce((s,l)=>s+(new Date(l.expectedEndTime)-new Date(l.expectedStartTime))/60000,0);
+ const same=ids(L[i].toPlace?.quay?.stopPlace).some(x=>ids(L[j].fromPlace?.quay?.stopPlace).includes(x));
+ return gap>=walk+XFER_WAIT&&(same||gap>=XFER_WALK_MIN);
+}
+async function transfers(A,B,want=[]){
  const pairs=A.stops.flatMap(a=>B.stops.map(b=>[a,b])).sort((x,y)=>(+x[0].walk||0)+(+x[1].walk||0)-(+y[0].walk||0)-(+y[1].walk||0)).slice(0,9);
  const at=a=>JSON.stringify(new Date(Date.now()+(+a.walk||0)*60000).toISOString());
- const d=await gql('{'+pairs.map(([a,b],k)=>`x${k}:trip(from:{place:${JSON.stringify(a.id)}},to:{place:${JSON.stringify(b.id)}},dateTime:${at(a)},numTripPatterns:5,maximumTransfers:2){tripPatterns{legs{${LEG}}}}`).join(' ')+'}');
+ const n=want.length?8:5; // med linjefilter går fleire av forslaga med andre linjer, og dei fell bort
+ const d=await gql('{'+pairs.map(([a,b],k)=>`x${k}:trip(from:{place:${JSON.stringify(a.id)}},to:{place:${JSON.stringify(b.id)}},dateTime:${at(a)},numTripPatterns:${n},maximumTransfers:2,transferSlack:${XFER_WAIT*60}){tripPatterns{legs{${LEG}}}}`).join(' ')+'}');
  const out=new Map();
  pairs.forEach(([a,b],k)=>{for(const p of d['x'+k]?.tripPatterns||[]){
   const L=p.legs||[],tr=L.filter(l=>l.line);
   if(tr.length!==2||!L[0].line||!L[L.length-1].line)continue;
-  const [l1,l2]=tr,dep=new Date(l1.expectedStartTime),arr=new Date(l2.expectedEndTime);
+  const [l1,l2]=tr,i=L.indexOf(l1),j=L.indexOf(l2);
+  if(l1.interchangeTo?.staySeated||(l1.serviceJourney?.id&&l1.serviceJourney.id===l2.serviceJourney?.id))continue; // sit på: ikkje eit bytte
+  if(want.length&&!want.includes(String(l1.line.publicCode||'').toUpperCase()))continue; // linjefilteret gjeld første tur
+  if(!xferOK(L,i,j))continue;
+  const dep=new Date(l1.expectedStartTime),arr=new Date(l2.expectedEndTime);
   const r={line:l1.line.publicCode||'–',mode:l1.line.transportMode||'bus',dest:l1.fromEstimatedCall?.destinationDisplay?.frontText||'',dep,
    delay:Math.round((dep-new Date(l1.aimedStartTime))/60000),rt:l1.realtime,cancel:tr.some(l=>l.fromEstimatedCall?.cancellation),
    from:a,walk:+a.walk||0,sj:l1.serviceJourney?.id,quay:l1.fromPlace?.quay,arr,door:new Date(+arr+(+b.walk||0)*60000),to:b,
@@ -316,10 +376,11 @@ function occ(o){
 function minHTML(m,d){return m<=0?'Nå':m>=60?esc(hm(d)):m+'<i>min</i>'}
 function tripView(){
  const t=cfg.trips.find(x=>x.id===cur);
+ if(t&&posWait>Date.now())return'<section class="hero none" aria-live="polite"><div class="k"><span>Finn reisa di …</span></div></section>';
  if(!t)return`<section class="card"><h2>Kom i gang</h2><p class="empty">Lag ein stad (til dømes «Heim») med stoppa du brukar, ein stad til, og ei reise mellom dei. Skal du berre ta ferja, legg til eit ferjesamband.</p><div class="btns"><button class="cta" type="button" data-act="openSetup">Set opp</button><button class="sec" type="button" data-act="ferry">+ Ferjesamband</button></div></section>`;
  const [A,B]=ends(t);
  const flip=t.ferry?'<button class="flip" type="button" data-act="flip" aria-label="Snu: vis ferjer frå andre sida">⇄ Snu</button>':'';
- const kk=t.ferry?`Frå ${esc(A.name)} til ${esc(B.name)}${autoBy===t.id+t.dir?' <small>· etter posisjonen din</small>':''}`:`Raskast til ${esc(B.name)}`;
+ const kk=t.ferry?`Frå ${esc(A.name)} til ${esc(B.name)}${byPos(t)?' <small>· etter posisjonen din</small>':''}`:`Raskast til ${esc(B.name)}${byPos(t)?' <small>· vald etter posisjonen din</small>':''}`;
  if(!A?.stops.length||!B?.stops.length)return`<section class="card"><h2>${esc(tripName(t))}</h2><p class="empty">Begge stadane treng minst eitt stopp.</p><div class="btns"><button class="cta" type="button" data-act="openSetup">Opne oppsett</button></div></section>`;
  if(err&&!data)return`<section class="card"><h2>Fekk ikkje kontakt med Entur</h2><p class="empty">${esc(err)}</p></section>`;
  if(!data)return'';
@@ -327,12 +388,12 @@ function tripView(){
  const ok=data.filter(r=>!r.cancel&&r.leave>=0).sort((a,b)=>a.door-b.door||a.dep-b.dep);
  const best=ok[0];
  const list=shown=data.filter(r=>mins(r.dep)>=0).sort((a,b)=>a.door-b.door||a.dep-b.dep).slice(0,10);
- let h='';
+ let h=Date.now()<switchUntil?`<p class="switched" role="status">${esc(switchMsg)}</p>`:'';
  if(best){
   const go=best.walk?(best.leave===0?'Gå no':'Gå om '+best.leave+'<i>min</i>'):(best.leave===0?'Går no':'Går om '+best.leave+'<i>min</i>');
   h+=`<section class="hero" aria-live="polite"><div class="k"><span>${kk}</span>${flip}</div><div class="big">${go}</div>
    <div class="s"><b>${esc(best.line)}</b> frå ${esc(best.from.name)} kl. ${esc(hm(best.dep))}${best.xfer?`, bytt til <b>${esc(best.xfer.line)}</b> på ${esc(best.xfer.on||best.xfer.at)} kl. ${esc(hm(best.xfer.dep))}`:''} · framme <b>${esc(hm(best.door))}</b></div>${best.sit.length?sitBtn(best.sit[0],'avb'):''}</section>`;
- }else h+=`<section class="hero none"><div class="k"><span>${t.ferry?kk+' · ':''}Ingen avgangar du rekk det neste døgeret.</span>${flip}</div></section>`;
+ }else h+=`<section class="hero none"><div class="k"><span>${t.ferry?kk+' · ':byPos(t)?'Vald etter posisjonen din · ':''}Ingen avgangar du rekk det neste døgeret.</span>${flip}</div></section>`;
  h+=`<section class="card"><h2>${data.xfer?'Med eitt bytte <small>ingen direkte avgang du rekk</small>':`Sortert etter når du er framme <small>${esc(tripName(t))}</small>`}</h2>${list.length?list.map((r,i)=>{
   const c=MODEC[r.mode]||'var(--bus)',miss=r.leave<0&&!r.cancel;
   return`<button type="button" data-row="${i}" class="row ${r===best?'best':''} ${miss?'miss':''} ${r.cancel?'cancel':''}" style="--c:${c}" aria-label="Vis ${esc(r.line)} til ${esc(r.dest)} på kartet">
@@ -390,16 +451,18 @@ function setupView(){
   ${cfg.places.length<2?'<p class="note">Du treng minst to stader for å lage ei reise.</p>':''}</section>
  <section class="card"><h2>Ferjesamband <small>éi oppføring for begge retningar</small></h2>
   ${fer.map(t=>`<div class="stop" data-trip="${esc(t.id)}" style="--c:var(--water)"><span class="dot"></span><div>${esc(tripName(t))}</div><span></span><button class="x" type="button" data-act="tdel" aria-label="Slett samband">×</button></div>`).join('')||'<p class="empty">Ingen samband enno.</p>'}
-  ${fer.length?`<label class="chk"><input type="checkbox" data-act="autoside"${ls.get('autoside',false)?' checked':''}> Vel kai etter kvar eg er</label>
-  <p class="note">Appen samanliknar posisjonen din med dei to kaiane, berre på denne eininga. Posisjonen blir ikkje lagra og ikkje sendt nokon stad. Utan posisjon viser appen den sida du såg på sist.</p>`:''}
   <div class="btns"><button class="sec" type="button" data-act="ferry">+ Ferjesamband</button></div></section>
+ ${cfg.trips.length?`<section class="card"><h2>Opne etter kvar du er</h2>
+  <label class="chk"><input type="checkbox" data-act="auto"${ls.get('auto',false)?' checked':''}> Vel reise og kai etter kvar eg er</label>
+  <p class="note">Når du opnar appen, eller kjem tilbake til han etter meir enn 2 min, samanliknar han posisjonen din med punkta for stadene og med ferjekaiane. Er du innan ${String(AUTO_NEAR/1000).replace('.',',')} km frå ein av dei, opnar reisa frå den staden som du brukte sist, og for ferjesamband kaien du er ved. Elles opnar det du såg på sist. Vel du ei anna reise sjølv, står valet til du er ved ein annan stad, men høgst ${AUTO_HOLD/3600e3} timar. Posisjonen blir berre samanlikna på denne eininga og blir ikkje lagra eller sendt nokon stad. Appen hugsar berre kva stad du var ved då du valde.</p>
+  ${!Object.keys(pts).length&&!fer.length?'<p class="note">Ingen stader har punkt enno. Vel «Kvar er staden?» på staden du vil kjennast att ved.</p>':''}</section>`:''}
  ${cfg.trips.length>1?`<section class="card" id="order"><h2>Rekkjefølgje <small>slik reisene står øvst</small></h2>
   ${cfg.trips.map((t,i)=>`<div class="ord" data-trip="${esc(t.id)}"><span class="num">${i+1}</span><span>${esc(tripName(t))}</span>
    <button class="x" type="button" data-act="tup" aria-label="Flytt ${esc(tripName(t))} opp"${i?'':' disabled'}>↑</button><button class="x" type="button" data-act="tdown" aria-label="Flytt ${esc(tripName(t))} ned"${i<cfg.trips.length-1?'':' disabled'}>↓</button></div>`).join('')}
   <p class="note">Den første reisa opnar når appen ikkje har noko anna val, til dømes etter import.</p></section>`:''}
  <section class="card"><h2>Del med familien</h2>
   <p class="note">Lenka inneheld stadane, stoppa og reisene dine, men ikkje kvar stadene er. Opnar nokon lenka, kan dei importere oppsettet.</p>
-  <div class="btns"><button class="cta" type="button" data-act="share">${navigator.share?'Del lenka':'Kopier delingslenke'}</button><button class="sec" type="button" data-act="qr">Vis QR-kode</button><button class="sec" type="button" data-act="paste">Opne delingslenke</button><button class="sec" type="button" data-act="reset">Nullstill</button></div></section>
+  <div class="btns"><button class="cta" type="button" data-act="share">${navigator.share?'Del lenka':'Kopier delingslenke'}</button><button class="sec" type="button" data-act="qr">Vis QR-kode</button><button class="sec" type="button" data-act="paste">Opne delingslenke</button><button class="sec" type="button" data-act="scan">Skann QR-kode</button><button class="sec" type="button" data-act="reset">Nullstill</button></div></section>
  <div class="btns" style="margin:0 0 20px"><button class="cta" type="button" data-act="done">Ferdig</button></div>`;
 }
 
@@ -414,8 +477,8 @@ function render(){
  $('#status').hidden=view!=='trip'||!cur;
  $('#status').innerHTML=err?'<b>Feil</b> · prøv igjen':at?`<b>${esc(hm(at))}</b>`:'…';
 }
-function renderSetup(){$('#app').innerHTML=setupView();render()}
-function go(v){view=v;if(v==='setup'){renderSetup()}else{if(!cfg.trips.find(t=>t.id===cur))cur=cfg.trips[0]?.id||null;ls.set('cur',cur);data=null;render();load();autoSide()}}
+function renderSetup(){$('#app').innerHTML=setupView();render();shareLink()}
+function go(v,open){view=v;if(v==='setup'){renderSetup()}else{if(!cfg.trips.find(t=>t.id===cur))cur=cfg.trips[0]?.id||null;ls.set('cur',cur);data=null;render();load();autoPick(!!open)}}
 
 // ---------- søk ----------
 let st=null;
@@ -483,20 +546,56 @@ function ferryMake(o){
  const key=[fFrom.id,o.id].sort().join();
  let t=cfg.trips.find(x=>x.ferry&&[x.ferry.a.id,x.ferry.b.id].sort().join()===key);
  if(!t){t={id:uid(),ferry:{a:fEnd(fFrom),b:fEnd(o)},dir:'ab'};cfg.trips.push(t)}
- save();$('#dlg').innerHTML='';cur=t.id;go('trip');
+ save();$('#dlg').innerHTML='';cur=t.id;touch(t.id);hold();go('trip');
 }
-// Vel kai etter posisjonen: den næraste kaien er der du er. Posisjonen blir berre samanlikna her og aldri lagra.
+// Vel reise og kai etter posisjonen. Posisjonen blir berre samanlikna her og aldri lagra eller sendt.
+// full: ved opning og etter 2 min i bakgrunnen; finn næraste stad (punkt) eller ferjekai innan AUTO_NEAR og vel den sist brukte
+// reisa derifrå. Elles (og når du sjølv vel eit ferjesamband): berre kaien for sambandet som er valt, som før.
 let hiddenAt=0;
-function autoSide(){
- const t=cfg.trips.find(x=>x.id===cur);
- if(!t?.ferry||!ls.get('autoside',false)||!navigator.geolocation)return;
- const {a,b}=t.ferry;if(a.lat==null||b.lat==null)return;
+function nearest(la,lo){
+ let best=null;const see=(m,o)=>{if(!best||m<best.m)best={m,...o}};
+ for(const p of cfg.places){const c=pts[p.id];if(c)see(dist(la,lo,c.lat,c.lon),{place:p.id})}
+ for(const t of cfg.trips)if(t.ferry)for(const e of [t.ferry.a,t.ferry.b])if(e.lat!=null)see(dist(la,lo,e.lat,e.lon),{kai:e.id});
+ return best&&best.m<=AUTO_NEAR?best:null;
+}
+function tripAt(n){ // den sist brukte reisa frå staden eller kaien; utan bruk: den første i rekkjefølgja
+ const c=[];cfg.trips.forEach((t,i)=>{
+  if(n.place&&!t.ferry&&t.from===n.place)c.push({t,i});
+  else if(n.kai&&t.ferry&&(t.ferry.a.id===n.kai||t.ferry.b.id===n.kai))c.push({t,i,dir:t.ferry.a.id===n.kai?'ab':'ba'});
+ });
+ return c.sort((x,y)=>(used[y.t.id]||0)-(used[x.t.id]||0)||x.i-y.i)[0]||null;
+}
+function autoPick(full){
+ if(!ls.get('auto',false)||!navigator.geolocation)return;
+ const t0=cfg.trips.find(x=>x.id===cur),mark=pickedAt;
+ if(!full&&!t0?.ferry)return;
+ // Ved opning: vent kort på posisjonen (han blir henta medan avgangane blir henta), så lista ikkje hoppar.
+ if(full){posWait=Date.now()+AUTO_WAIT;setTimeout(()=>{if(posWait&&Date.now()>=posWait){posWait=0;render()}},AUTO_WAIT+20)}
+ const done=()=>{if(posWait){posWait=0;render()}};
  navigator.geolocation.getCurrentPosition(p=>{
-  if(cur!==t.id)return;
-  const {latitude:la,longitude:lo}=p.coords,dir=dist(la,lo,a.lat,a.lon)<=dist(la,lo,b.lat,b.lon)?'ab':'ba';
-  autoBy=t.id+dir;
-  if(dir!==t.dir){t.dir=dir;save();data=null;err=null;render();load()}else if(view==='trip')render();
- },()=>{},{maximumAge:120000,timeout:10000});
+  const late=full&&!posWait;posWait=0; // late: lista er alt vist
+  if(pickedAt!==mark||view!=='trip'){render();return} // du har valt sjølv medan vi venta
+  const {latitude:la,longitude:lo}=p.coords,n=nearest(la,lo);hereKey=placeKey(n);
+  // Eit eige val står så lenge du er ved same stad (og ikkje lenger enn AUTO_HOLD).
+  const keep=full&&held&&Date.now()-held.at<AUTO_HOLD&&(held.where==='?'||held.where===hereKey);
+  if(full&&held&&!keep){held=null;ls.set('held',null)}
+  if(keep){render();return}
+  const hit=full&&n&&tripAt(n);
+  let t=cfg.trips.find(x=>x.id===cur),dir=t?.dir;
+  if(hit){t=hit.t;dir=hit.dir}
+  else if(t?.ferry&&t.ferry.a.lat!=null&&t.ferry.b.lat!=null){const {a,b}=t.ferry;dir=dist(la,lo,a.lat,a.lon)<=dist(la,lo,b.lat,b.lon)?'ab':'ba'}
+  else{render();return}
+  autoBy=t.id+(t.ferry?dir:'');
+  const moved=t.id!==cur||(t.ferry&&dir!==t.dir);
+  if(moved){
+   if(t.ferry&&dir!==t.dir){t.dir=dir;save()}
+   if(late){ // forklar hoppet
+    const where=n?.place?place(n.place)?.name:n?.kai?'kaien':'';
+    switchMsg=`Bytte til ${tripName(t)}${where?`: du er ved ${where}`:''}.`;switchUntil=Date.now()+8000;setTimeout(render,8100);
+   }
+   cur=t.id;ls.set('cur',cur);data=null;err=null;at=null;render();load();
+  }else render();
+ },done,{maximumAge:Math.min(120000,Date.now()-hiddenAt),timeout:10000}); // mellomlagra posisjon berre om han er nyare enn då appen gjekk i bakgrunnen, og høgst 2 min
 }
 function addStop(pid,s){
  const p=place(pid);if(!p||p.stops.some(x=>x.id===s.id))return;
@@ -640,33 +739,64 @@ async function mapStops(){
 // ---------- deling ----------
 const b64e=s=>btoa(unescape(encodeURIComponent(s))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const b64d=s=>decodeURIComponent(escape(atob(s.replace(/-/g,'+').replace(/_/g,'/'))));
-function shareLink(){return location.href.split('#')[0]+'#oppsett='+b64e(JSON.stringify({p:cfg.places,t:cfg.trips}))}
-function dialog(html){$('#dlg').innerHTML=`<section class="card" style="box-shadow:0 14px 40px rgba(0,0,0,.35)">${html}</section>`}
+// Delingslenka, kort format: «z» + base64url av kompakt JSON komprimert med deflate-raw (CompressionStream).
+// Kompakt JSON: [stader, reiser]; stad [id,namn,[[stopp-ID,namn,gangtid,(modus utan buss)]…]]; reise [id,frå,til,(linjer)];
+// samband [id,[kai-ID,namn,lat,lon],[…],dir]. Stopp-ID «NSR:StopPlace:123» blir talet 123. `label` er ikkje med.
+// Gamle lenker (base64url av {"p":…,"t":…}) byrjar alltid på «ey», så dei kan ikkje forvekslast, og blir lesne som før.
+// Utan CompressionStream blir lenka som før (ukomprimert), men utan `label`.
+const SID='NSR:StopPlace:',NOZIP='nozip';
+const sidE=i=>/^NSR:StopPlace:\d+$/.test(i)?+i.slice(SID.length):i,sidD=x=>typeof x==='number'?SID+x:String(x);
+const u8b64=u=>{let s='';for(const b of u)s+=String.fromCharCode(b);return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')};
+const b64u8=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
+const pipe=async(u,ts)=>new Uint8Array(await new Response(new Blob([u]).stream().pipeThrough(ts)).arrayBuffer());
+async function makeLink(){
+ const base=location.href.split('#')[0]+'#oppsett=';
+ const P=cfg.places.map(p=>[p.id,p.name,p.stops.map(s=>[sidE(s.id),s.name,+s.walk||0,...(s.mode&&s.mode!=='bus'?[s.mode]:[])])]);
+ const E=e=>[sidE(e.id),e.full||e.name,...(e.lat==null?[]:[+(+e.lat).toFixed(5),+(+e.lon).toFixed(5)])];
+ const T=cfg.trips.map(t=>t.ferry?[t.id,E(t.ferry.a),E(t.ferry.b),t.dir]:[t.id,t.from,t.to,...(t.lines?[t.lines]:[])]);
+ try{return base+'z'+u8b64(await pipe(new TextEncoder().encode(JSON.stringify([P,T])),new CompressionStream('deflate-raw')))}
+ catch(e){return base+b64e(JSON.stringify({p:cfg.places.map(p=>({id:p.id,name:p.name,stops:p.stops.map(({label,...s})=>s)})),t:cfg.trips}))}
+}
+// Lenka blir laga på førehand når oppsettet blir vist, så «Del» og «Kopier» skjer medan trykket framleis gjeld (Safari).
+let link={key:'',url:''};
+async function shareLink(){const k=JSON.stringify(cfg);if(link.key!==k){const url=await makeLink();link={key:k,url}}return link.url}
+function dialog(html){stopScan();$('#dlg').innerHTML=`<section class="card" style="box-shadow:0 14px 40px rgba(0,0,0,.35)">${html}</section>`}
 // Les og vask eit oppsett frå delingslenka (berre `#oppsett=…`-delen).
-function readShare(code){
-  const o=JSON.parse(b64d(code));
+async function readShare(code){
+  let o;
+  if(code[0]==='z'){ // kort format
+   try{new DecompressionStream('deflate-raw')}catch(e){throw NOZIP}
+   const [P,T]=JSON.parse(new TextDecoder().decode(await pipe(b64u8(code.slice(1)),new DecompressionStream('deflate-raw'))));
+   const F=([i,n,la,lo])=>({id:sidD(i),name:n,full:n,lat:la??null,lon:lo??null});
+   o={p:P.map(([id,name,st])=>({id,name,stops:(st||[]).map(([i,n,w,m])=>({id:sidD(i),name:n,walk:w,mode:m}))})),
+    t:T.map(([id,x,y,z])=>Array.isArray(x)?{id,ferry:{a:F(x),b:F(y)},dir:z}:{id,from:x,to:y,lines:z})};
+  }else o=JSON.parse(b64d(code));
   if(!Array.isArray(o.p)||!Array.isArray(o.t))throw 0;
   return{places:o.p.map(p=>({id:String(p.id),name:String(p.name),stops:(p.stops||[]).map(s=>({id:String(s.id),name:String(s.name),label:String(s.label||''),mode:String(s.mode||'bus'),walk:+s.walk||0}))})),
    trips:o.t.map(t=>t.ferry?{id:String(t.id),ferry:{a:fEnd(t.ferry.a),b:fEnd(t.ferry.b)},dir:t.dir==='ba'?'ba':'ab'}:{id:String(t.id),from:String(t.from),to:String(t.to),lines:String(t.lines||'')})};
 }
 // Finn koden i ei lima lenke (eller berre koden).
 const shareCode=txt=>(String(txt).match(/#oppsett=([A-Za-z0-9_-]+)/)||String(txt).trim().match(/^([A-Za-z0-9_-]{16,})$/)||[])[1];
-function offerImport(code){
- try{window._imp=readShare(code)}catch(e){dialog(`<h2>Lenka var øydelagd</h2><p class="note">Sjekk at du fekk med heile lenka.</p><div class="btns">${closeBtn}</div>`);return}
+async function offerImport(code){
+ try{window._imp=await readShare(code)}catch(e){
+  dialog(e===NOZIP?`<h2>Nettlesaren kan ikkje opne lenka</h2><p class="note">Lenka er komprimert, og denne nettlesaren kan ikkje pakke ho ut. Oppdater nettlesaren (på iPhone: iOS 16.4 eller nyare) og prøv igjen.</p><div class="btns">${closeBtn}</div>`
+   :`<h2>Lenka var øydelagd</h2><p class="note">Sjekk at du fekk med heile lenka.</p><div class="btns">${closeBtn}</div>`);return}
  window._link=location.href.split('#')[0]+'#oppsett='+code;
  // Safari på iPhone (ikkje appen på Heim-skjermen): appen der har eiga lagring og får ikkje med seg importen.
- const ios=navigator.standalone===false?`<p class="note"><b>Brukar du Neste frå Heim-skjermen?</b> Der har appen eiga lagring. Kopier lenka, opne Neste frå Heim-skjermen og vel Oppsett → «Opne delingslenke».</p>`:'';
+ const ios=navigator.standalone===false?`<p class="note"><b>Brukar du Neste frå Heim-skjermen?</b> Der har appen eiga lagring. Kopier lenka, opne Neste frå Heim-skjermen og vel Oppsett → «Opne delingslenke». Har du QR-koden, kan du i staden skanne han med Oppsett → «Skann QR-kode» i appen.</p>`:'';
  dialog(`<h2>Importere oppsett?</h2><p class="note">${window._imp.places.length} stader og ${window._imp.trips.length} reiser. Dette erstattar oppsettet ditt her.</p>${ios}
   <div class="btns"><button class="cta" type="button" data-act="impYes">Importer</button>${ios?'<button class="sec" type="button" data-act="copyLink">Kopier lenka</button>':''}<button class="sec" type="button" data-act="impNo">Avbryt</button></div>`);
 }
 // QR-kode for delingslenka: teikna som SVG, mørk på kvitt uansett tema (det les kamera best).
-function loadQR(){
+// Lastar eit skript frå cdnjs med eksakt versjon og SRI, berre når det trengst.
+function loadLib(lib,ready,msg){
  return new Promise((ok,no)=>{
-  if(window.qrcode)return ok();
-  const s=document.createElement('script');s.src=QRLIB.src;s.integrity=QRLIB.sri;s.crossOrigin='anonymous';
-  s.onload=ok;s.onerror=()=>no(new Error('QR-kodaren lasta ikkje'));document.head.appendChild(s);
+  if(ready())return ok();
+  const s=document.createElement('script');s.src=lib.src;s.integrity=lib.sri;s.crossOrigin='anonymous';
+  s.onload=()=>ready()?ok():no(new Error(msg));s.onerror=()=>no(new Error(msg));document.head.appendChild(s);
  });
 }
+const loadQR=()=>loadLib(QRLIB,()=>window.qrcode,'QR-kodaren lasta ikkje');
 function qrSVG(text){
  const q=qrcode(0,'L');q.addData(text,'Byte');q.make(); // L: lengst lenke per kode; skjermen er rein
  const n=q.getModuleCount(),m=4;let d='';
@@ -676,11 +806,11 @@ function qrSVG(text){
 async function qrDialog(){
  dialog('<h2>QR-kode</h2><p class="note">Lagar QR-kode …</p>');
  let svg;
- try{await loadQR();svg=qrSVG(shareLink())}
+ try{await loadQR();svg=qrSVG(await shareLink())}
  catch(e){dialog(`<h2>QR-kode</h2><p class="note">${/overflow/i.test(e.message||e)?'Oppsettet er for stort til éin QR-kode. Del lenka i staden.':esc(e.message||e)}</p><div class="btns">${closeBtn}</div>`);return}
  dialog(`<h2>Skann for å få oppsettet</h2><div class="qr">${svg}</div>
   <p class="note">Opne kameraet på den andre telefonen og skann koden. Lenka inneheld stadane, stoppa og reisene, men ikkje kvar stadene er.</p>
-  <p class="note"><b>iPhone:</b> kameraet opnar lenka i Safari. Brukar dei Neste frå Heim-skjermen, vel dei «Kopier lenka» der, opnar Neste frå Heim-skjermen og vel Oppsett → «Opne delingslenke».</p>
+  <p class="note"><b>iPhone med Neste på Heim-skjermen:</b> skann frå inne i appen, med Oppsett → «Skann QR-kode». Kamera-appen opnar lenka i Safari, som har eiga lagring; der kan ein velje «Kopier lenka» og lime ho inn under Oppsett → «Opne delingslenke».</p>
   <div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div>`);
 }
 function checkImport(){
@@ -689,9 +819,71 @@ function checkImport(){
  history.replaceState(null,'',location.pathname+location.search);
 }
 function pasteDialog(){
- dialog(`<h2>Opne delingslenke</h2><p class="note">Lim inn lenka du har fått. Brukar du Neste frå Heim-skjermen på iPhone, er det slik du får oppsettet inn i appen.</p>
+ dialog(`<h2>Opne delingslenke</h2><p class="note">Lim inn lenka du har fått, eller skann QR-koden frå den andre telefonen. Brukar du Neste frå Heim-skjermen på iPhone, er det slik du får oppsettet inn i appen.</p>
   <input id="impTxt" type="url" placeholder="Lim inn lenka her" autocomplete="off" aria-label="Delingslenke">
-  <div class="btns"><button class="cta" type="button" data-act="impPaste">Opne</button>${navigator.clipboard?.readText?'<button class="sec" type="button" data-act="impClip">Lim inn</button>':''}${closeBtn}</div>`);
+  <div class="btns"><button class="cta" type="button" data-act="impPaste">Opne</button>${navigator.clipboard?.readText?'<button class="sec" type="button" data-act="impClip">Lim inn</button>':''}<button class="sec" type="button" data-act="scan">Skann QR-kode</button>${closeBtn}</div>`);
+}
+
+// ---------- QR-skannar ----------
+// Kameraet (bakkameraet) blir berre brukt medan dialogen er open, og bileta blir lesne her på eininga.
+// Med BarcodeDetector: eigen getUserMedia og <video>. Elles: html5-qrcode, som opnar kameraet sjølv.
+// Berre kodar med ei Neste-delingslenke (#oppsett=) blir godtekne; dei går til same import som liming.
+let scan=null; // {stream, timer, lib} medan skannaren går
+function stopScan(){
+ const s=scan;scan=null;if(!s)return;
+ clearTimeout(s.timer);s.stream?.getTracks().forEach(t=>t.stop());
+ if(s.lib)s.lib.then(q=>q&&q.stop().then(()=>q.clear()).catch(()=>{})).catch(()=>{});
+}
+const scanNote=t=>{const n=$('#scanNote');if(n)n.textContent=t};
+function camErr(e){
+ const n=String(e?.name||'')+' '+String(e?.message||e||'');
+ return/NotAllowed|Permission|SecurityError/i.test(n)?'Neste fekk ikkje bruke kameraet. Gi lov til kameraet i innstillingane for nettlesaren (på iPhone: Innstillingar → Safari → Kamera), eller lim inn lenka i staden.'
+  :/NotFound|Overconstrained|DevicesNotFound|no camera|not found/i.test(n)?'Fann ikkje noko kamera på denne eininga. Lim inn lenka i staden.'
+  :/NotReadable|TrackStart|in use/i.test(n)?'Kameraet er i bruk av ein annan app. Lukk den og prøv igjen.'
+  :'Fekk ikkje starta kameraet: '+n.trim();
+}
+function scanHit(txt){
+ if(!scan)return;
+ const m=String(txt||'').match(/#oppsett=[A-Za-z0-9_-]+/);
+ if(!m){scanNote('Det er ikkje ein QR-kode frå Neste. Hald kameraet mot koden under Oppsett → «Vis QR-kode».');return}
+ stopScan();tryPaste(m[0]);
+}
+async function scanDialog(){
+ dialog(`<h2>Skann QR-kode</h2><div class="scan" id="scanBox"></div><p class="note" id="scanNote">Startar kameraet …</p>
+  <p class="note">Bileta blir berre lesne på denne eininga.</p><div class="btns"><button class="sec" type="button" data-act="paste">Lim inn i staden</button>${closeBtn}</div>`);
+ const me=scan={};
+ const fail=e=>{if(scan!==me)return;stopScan();$('#scanBox')?.remove();scanNote(camErr(e))};
+ if(!navigator.mediaDevices?.getUserMedia)return fail({name:'NotFoundError'});
+ let bd=false;try{bd='BarcodeDetector' in window&&(await BarcodeDetector.getSupportedFormats()).includes('qr_code')}catch(e){}
+ if(scan!==me)return;
+ const ready=()=>{if(scan===me)scanNote('Hald kameraet mot QR-koden for Neste.')};
+ if(bd){
+  try{
+   const det=new BarcodeDetector({formats:['qr_code']});
+   const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});
+   if(scan!==me){stream.getTracks().forEach(t=>t.stop());return}
+   me.stream=stream;
+   const v=document.createElement('video');v.muted=true;v.playsInline=true;v.setAttribute('playsinline','');v.srcObject=stream;
+   $('#scanBox').appendChild(v);await v.play();ready();
+   const tick=async()=>{if(scan!==me)return;
+    try{for(const c of await det.detect(v))if(scan===me)scanHit(c.rawValue)}catch(e){}
+    if(scan===me)me.timer=setTimeout(tick,200)};
+   tick();
+  }catch(e){fail(e)}
+  return;
+ }
+ // Utan BarcodeDetector: html5-qrcode frå cdnjs.
+ scanNote('Hentar QR-lesaren …');
+ me.lib=(async()=>{
+  await loadLib(SCANLIB,()=>window.Html5Qrcode,'QR-lesaren lasta ikkje');
+  if(scan!==me)return null;
+  const box=$('#scanBox');box.innerHTML='<div id="scanLib"></div>';
+  const q=new Html5Qrcode('scanLib',{formatsToSupport:[Html5QrcodeSupportedFormats.QR_CODE],useBarCodeDetectorIfSupported:false,verbose:false});
+  await q.start({facingMode:'environment'},{fps:8},t=>scanHit(t),()=>{});
+  if(scan!==me){q.stop().then(()=>q.clear()).catch(()=>{});return null}
+  ready();return q;
+ })();
+ me.lib.catch(e=>{if(/lasta ikkje/.test(e?.message)){if(scan===me){stopScan();$('#scanBox')?.remove();scanNote(e.message+'. Sjekk nettet, eller lim inn lenka.')}}else fail(e)});
 }
 function tryPaste(txt){const c=shareCode(txt);if(c)offerImport(c);else dialog(`<h2>Fann inga delingslenke</h2><p class="note">Lenka skal innehalde «#oppsett=».</p><div class="btns"><button class="cta" type="button" data-act="paste">Prøv igjen</button>${closeBtn}</div>`)}
 // Endra i ei anna fane eller i nettlesaren (Android deler lagring med appen): les inn på nytt.
@@ -703,7 +895,7 @@ function syncFromStorage(){
 // ---------- hendingar ----------
 document.addEventListener('click',async e=>{
  const tb=e.target.closest('[data-trip-id]');
- if(tb){cur=tb.dataset.tripId;ls.set('cur',cur);data=null;err=null;at=null;render();load();autoSide();return}
+ if(tb){cur=tb.dataset.tripId;ls.set('cur',cur);touch(cur);hold();autoBy='';data=null;err=null;at=null;render();load();autoPick(false);return}
  const rb=e.target.closest('[data-row]');
  if(rb){openFollow(shown[+rb.dataset.row]);return}
  const b=e.target.closest('[data-act]');if(!b||b.matches('input,select'))return;
@@ -720,14 +912,14 @@ document.addEventListener('click',async e=>{
   case'fpick':ferryFrom(b.dataset);break;
   case'froute':ferryMake(fTo[+b.dataset.i]);break;
   case'sit':sitDialog(b.dataset.n);break;
-  case'flip':{const f=cfg.trips.find(x=>x.id===cur);if(!f?.ferry)break;f.dir=f.dir==='ba'?'ab':'ba';autoBy='';save();data=null;err=null;render();load()}break;
+  case'flip':{const f=cfg.trips.find(x=>x.id===cur);if(!f?.ferry)break;f.dir=f.dir==='ba'?'ab':'ba';autoBy='';touch(f.id);hold();save();data=null;err=null;render();load()}break;
   case'openMap':openMap(pid);break;
   case'tadd':cfg.trips.push({id:uid(),from:cfg.places[0].id,to:cfg.places[1].id,lines:''});re();break;
   case'tup':case'tdown':{const i=cfg.trips.indexOf(t),j=i+(a==='tup'?-1:1);if(i<0||j<0||j>=cfg.trips.length)break;
    [cfg.trips[i],cfg.trips[j]]=[cfg.trips[j],cfg.trips[i]];re();
    // Behald fokus på same knapp, eller den andre når reisa har nådd toppen eller botnen.
    const r=document.querySelector(`.ord[data-trip="${CSS.escape(t.id)}"]`);(r?.querySelector(`[data-act=${a}]:not(:disabled)`)||r?.querySelector('button:not(:disabled)'))?.focus()}break;
-  case'tdel':cfg.trips=cfg.trips.filter(x=>x!==t);re();break;
+  case'tdel':cfg.trips=cfg.trips.filter(x=>x!==t);delete used[t.id];ls.set('brukt',used);re();break;
   case'trev':cfg.trips.push({id:uid(),from:t.to,to:t.from,lines:t.lines});re();break;
   case'where':whereDialog(pid);break;
   case'near':nearDialog(pid);break;
@@ -737,17 +929,19 @@ document.addEventListener('click',async e=>{
   case'ntog':{const s=near[+b.dataset.i];if(!s||!p)break;const i=p.stops.findIndex(x=>x.id===s.id);
    if(i>=0)p.stops.splice(i,1);else addStop(pid,s);save();const on=i<0;b.setAttribute('aria-pressed',on);b.querySelector('.mk').textContent=on?'✓':'+'}break;
   case'ndone':$('#dlg').innerHTML='';renderSetup();break;
-  case'share':if(navigator.share){try{await navigator.share({title:'Neste',text:'Oppsettet mitt i Neste. Opne lenka, eller lim ho inn under Oppsett → «Opne delingslenke».',url:shareLink()})}catch(x){}break}
-   try{await navigator.clipboard.writeText(shareLink());b.textContent='Kopiert ✓'}catch(x){dialog(`<h2>Kopier lenka</h2><input readonly value="${esc(shareLink())}" onfocus="this.select()"><div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div>`)}break;
+  case'share':{const url=await shareLink();
+   if(navigator.share){try{await navigator.share({title:'Neste',text:'Oppsettet mitt i Neste. Opne lenka, eller lim ho inn under Oppsett → «Opne delingslenke».',url})}catch(x){}break}
+   try{await navigator.clipboard.writeText(url);b.textContent='Kopiert ✓'}catch(x){dialog(`<h2>Kopier lenka</h2><input readonly value="${esc(url)}" onfocus="this.select()"><div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div>`)}}break;
   case'reset':dialog('<h2>Nullstille alt?</h2><p class="note">Alle stader, reiser og punkta for stadene blir sletta frå denne eininga.</p><div class="btns"><button class="cta" type="button" data-act="resetYes">Nullstill</button><button class="sec" type="button" data-act="impNo">Avbryt</button></div>');break;
-  case'resetYes':cfg={places:[{id:uid(),name:'Heim',stops:[]}],trips:[]};pts={};savePts();save();$('#dlg').innerHTML='';renderSetup();break;
+  case'resetYes':cfg={places:[{id:uid(),name:'Heim',stops:[]}],trips:[]};pts={};savePts();held=null;ls.set('held',null);save();$('#dlg').innerHTML='';renderSetup();break;
   case'qr':qrDialog();break;
   case'paste':pasteDialog();$('#impTxt').focus();break;
   case'impPaste':tryPaste($('#impTxt').value);break;
   case'impClip':try{tryPaste(await navigator.clipboard.readText())}catch(x){$('#impTxt').focus()}break;
   case'copyLink':try{await navigator.clipboard.writeText(window._link);b.textContent='Kopiert ✓'}catch(x){dialog(`<h2>Kopier lenka</h2><input readonly value="${esc(window._link)}" onfocus="this.select()"><div class="btns">${closeBtn}</div>`)}break;
   case'impYes':cfg=window._imp;save();$('#dlg').innerHTML='';cur=null;go('trip');break;
-  case'impNo':$('#dlg').innerHTML='';break;
+  case'impNo':stopScan();$('#dlg').innerHTML='';break;
+  case'scan':scanDialog();break;
   case'mapClose':stopFollow();$('#map').classList.remove('on');if(view==='setup')renderSetup();break;
   case'mapStops':mapStops();break;
   case'mapLocate':try{navigator.geolocation.getCurrentPosition(x=>map.setView([x.coords.latitude,x.coords.longitude],16),()=>{$('#mapNote').textContent='Fekk ikkje posisjonen.'})}catch(x){}break;
@@ -762,11 +956,11 @@ document.addEventListener('change',e=>{
  else if(a==='tfrom'){t.from=el.value;save()}
  else if(a==='tto'){t.to=el.value;save()}
  else if(a==='tlines'){t.lines=el.value;save()}
- else if(a==='autoside'){
-  ls.set('autoside',el.checked);
+ else if(a==='auto'){
+  ls.set('auto',el.checked);
   // Spør om lov med ein gong, så ein ikkje blir spurd midt i ei avgangsliste.
-  if(el.checked)navigator.geolocation?.getCurrentPosition(()=>{},()=>{el.checked=false;ls.set('autoside',false);
-   dialog(`<h2>Fekk ikkje posisjonen</h2><p class="note">Gi nettlesaren lov til å bruke posisjonen, eller vel kai med «Snu».</p><div class="btns">${closeBtn}</div>`)},{timeout:15000});
+  if(el.checked)navigator.geolocation?.getCurrentPosition(()=>{},()=>{el.checked=false;ls.set('auto',false);
+   dialog(`<h2>Fekk ikkje posisjonen</h2><p class="note">Gi nettlesaren lov til å bruke posisjonen, eller vel reise og kai sjølv.</p><div class="btns">${closeBtn}</div>`)},{timeout:15000});
  }
 });
 document.addEventListener('input',e=>{if(e.target.dataset.act==='search'){clearTimeout(st);const i=e.target;st=setTimeout(()=>search(i),250)}});
@@ -774,12 +968,12 @@ $('#mapPlace').addEventListener('change',drawPt);
 $('#setup').addEventListener('click',()=>go(view==='trip'?'setup':'trip'));
 $('#status').addEventListener('click',load);
 window.addEventListener('storage',e=>{if(e.key==='neste.cfg')syncFromStorage()});
-document.addEventListener('visibilitychange',()=>{if(document.hidden){hiddenAt=Date.now();return}syncFromStorage();if(!at||Date.now()-at>20000)load();if(follow)track();if(Date.now()-hiddenAt>120000)autoSide()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){hiddenAt=Date.now();if(scan){stopScan();$('#scanBox')?.remove();scanNote('Kameraet stoppa då appen gjekk i bakgrunnen. Trykk «Skann QR-kode» for å prøve igjen.')}return}syncFromStorage();if(!at||Date.now()-at>20000)load();if(follow)track();if(Date.now()-hiddenAt>120000)autoPick(true)});
 setInterval(()=>{if(!document.hidden)load()},30000);
 setInterval(()=>{if(!document.hidden&&view==='trip'&&data)render()},10000);
 window.addEventListener('hashchange',checkImport); // delingslenke opna i ei fane som alt viser appen
 checkImport();
-go(cfg.trips.length?'trip':'setup');
+go(cfg.trips.length?'trip':'setup',true);
 }
 </script>
 </body>
