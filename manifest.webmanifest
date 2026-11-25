@@ -1,0 +1,17 @@
+{
+  "name": "Neste",
+  "short_name": "Neste",
+  "description": "Avgangane dine, rekna dør til dør. Sanntid frå Entur.",
+  "lang": "nn",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0e1116",
+  "theme_color": "#0e1116",
+  "icons": [
+    {"src": "ikon/neste.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"},
+    {"src": "ikon/neste-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "ikon/neste-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "ikon/neste-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ]
+}

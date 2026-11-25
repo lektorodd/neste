@@ -5,7 +5,8 @@ Køyr:  pip install playwright && playwright install chromium
 Skjermbilete hamnar i tests/out/. Testen går gjennom oppsettet
 (søk, legg til stopp, ny stad, reise + retur), reisevisinga,
 følgjekartet (Leaflet frå cdnjs; blir hoppa over utan nett), kvar ein
-stad er (stopp i nærleiken med gangtid) og ferjesamband (snu kai, og kai vald etter påfunnen posisjon).
+stad er (stopp i nærleiken med gangtid) og ferjesamband (snu kai, og kai vald etter påfunnen posisjon). Sjekkar òg
+manifest og ikon.
 """
 import json, datetime as dt, pathlib
 from urllib.parse import urlparse, parse_qs
@@ -102,6 +103,23 @@ def veh(route):
 
 PNG = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
                     "1f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082")
+
+def check_manifest():
+    """Manifestet er gyldig JSON, og kvart ikon finst med rett storleik (PNG-storleik les vi frå IHDR)."""
+    import struct
+    m = json.loads((ROOT / "manifest.webmanifest").read_text())
+    assert m["display"] == "standalone" and m["start_url"] == "./"
+    assert any(i.get("purpose") == "maskable" for i in m["icons"]), "manglar maskable-ikon"
+    for i in m["icons"]:
+        f = ROOT / i["src"]; assert f.exists(), f"manglar {i['src']}"
+        if i["type"] == "image/png":
+            w, h = struct.unpack(">II", f.read_bytes()[16:24])
+            assert i["sizes"] == f"{w}x{h}", f"{i['src']}: {w}x{h}, manifestet seier {i['sizes']}"
+    html = (ROOT / "index.html").read_text()
+    for ref in ("manifest.webmanifest", "favicon.ico", "ikon/neste.svg", "ikon/neste-180.png"):
+        assert ref in html and (ROOT / ref).exists(), f"{ref} manglar i index.html eller på disk"
+
+check_manifest()
 
 with sync_playwright() as p:
     import os
