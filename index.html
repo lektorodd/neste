@@ -298,7 +298,7 @@ function setupView(){
   <div class="btns"><button class="sec" type="button" data-act="ferry">+ Ferjesamband</button></div></section>
  <section class="card"><h2>Del med familien</h2>
   <p class="note">Lenka inneheld stadane, stoppa og reisene dine, men ikkje kvar stadene er. Opnar nokon lenka, kan dei importere oppsettet.</p>
-  <div class="btns"><button class="cta" type="button" data-act="share">Kopier delingslenke</button><button class="sec" type="button" data-act="reset">Nullstill</button></div></section>
+  <div class="btns"><button class="cta" type="button" data-act="share">${navigator.share?'Del lenka':'Kopier delingslenke'}</button><button class="sec" type="button" data-act="paste">Opne delingslenke</button><button class="sec" type="button" data-act="reset">Nullstill</button></div></section>
  <div class="btns" style="margin:0 0 20px"><button class="cta" type="button" data-act="done">Ferdig</button></div>`;
 }
 
@@ -541,16 +541,38 @@ const b64e=s=>btoa(unescape(encodeURIComponent(s))).replace(/\+/g,'-').replace(/
 const b64d=s=>decodeURIComponent(escape(atob(s.replace(/-/g,'+').replace(/_/g,'/'))));
 function shareLink(){return location.href.split('#')[0]+'#oppsett='+b64e(JSON.stringify({p:cfg.places,t:cfg.trips}))}
 function dialog(html){$('#dlg').innerHTML=`<section class="card" style="box-shadow:0 14px 40px rgba(0,0,0,.35)">${html}</section>`}
+// Les og vask eit oppsett frå delingslenka (berre `#oppsett=…`-delen).
+function readShare(code){
+  const o=JSON.parse(b64d(code));
+  if(!Array.isArray(o.p)||!Array.isArray(o.t))throw 0;
+  return{places:o.p.map(p=>({id:String(p.id),name:String(p.name),stops:(p.stops||[]).map(s=>({id:String(s.id),name:String(s.name),label:String(s.label||''),mode:String(s.mode||'bus'),walk:+s.walk||0}))})),
+   trips:o.t.map(t=>t.ferry?{id:String(t.id),ferry:{a:fEnd(t.ferry.a),b:fEnd(t.ferry.b)},dir:t.dir==='ba'?'ba':'ab'}:{id:String(t.id),from:String(t.from),to:String(t.to),lines:String(t.lines||'')})};
+}
+// Finn koden i ei lima lenke (eller berre koden).
+const shareCode=txt=>(String(txt).match(/#oppsett=([A-Za-z0-9_-]+)/)||String(txt).trim().match(/^([A-Za-z0-9_-]{16,})$/)||[])[1];
+function offerImport(code){
+ try{window._imp=readShare(code)}catch(e){dialog(`<h2>Lenka var øydelagd</h2><p class="note">Sjekk at du fekk med heile lenka.</p><div class="btns">${closeBtn}</div>`);return}
+ window._link=location.href.split('#')[0]+'#oppsett='+code;
+ // Safari på iPhone (ikkje appen på Heim-skjermen): appen der har eiga lagring og får ikkje med seg importen.
+ const ios=navigator.standalone===false?`<p class="note"><b>Brukar du Neste frå Heim-skjermen?</b> Der har appen eiga lagring. Kopier lenka, opne Neste frå Heim-skjermen og vel Oppsett → «Opne delingslenke».</p>`:'';
+ dialog(`<h2>Importere oppsett?</h2><p class="note">${window._imp.places.length} stader og ${window._imp.trips.length} reiser. Dette erstattar oppsettet ditt her.</p>${ios}
+  <div class="btns"><button class="cta" type="button" data-act="impYes">Importer</button>${ios?'<button class="sec" type="button" data-act="copyLink">Kopier lenka</button>':''}<button class="sec" type="button" data-act="impNo">Avbryt</button></div>`);
+}
 function checkImport(){
  const m=location.hash.match(/^#oppsett=(.+)$/);if(!m)return;
- try{
-  const o=JSON.parse(b64d(m[1]));
-  if(!Array.isArray(o.p)||!Array.isArray(o.t))throw 0;
-  window._imp={places:o.p.map(p=>({id:String(p.id),name:String(p.name),stops:(p.stops||[]).map(s=>({id:String(s.id),name:String(s.name),label:String(s.label||''),mode:String(s.mode||'bus'),walk:+s.walk||0}))})),
-   trips:o.t.map(t=>t.ferry?{id:String(t.id),ferry:{a:fEnd(t.ferry.a),b:fEnd(t.ferry.b)},dir:t.dir==='ba'?'ba':'ab'}:{id:String(t.id),from:String(t.from),to:String(t.to),lines:String(t.lines||'')})};
-  dialog(`<h2>Importere oppsett?</h2><p class="note">${window._imp.places.length} stader og ${window._imp.trips.length} reiser. Dette erstattar oppsettet ditt her.</p><div class="btns"><button class="cta" type="button" data-act="impYes">Importer</button><button class="sec" type="button" data-act="impNo">Avbryt</button></div>`);
- }catch(e){dialog('<h2>Lenka var øydelagd</h2><div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div>')}
+ offerImport(m[1]);
  history.replaceState(null,'',location.pathname+location.search);
+}
+function pasteDialog(){
+ dialog(`<h2>Opne delingslenke</h2><p class="note">Lim inn lenka du har fått. Brukar du Neste frå Heim-skjermen på iPhone, er det slik du får oppsettet inn i appen.</p>
+  <input id="impTxt" type="url" placeholder="Lim inn lenka her" autocomplete="off" aria-label="Delingslenke">
+  <div class="btns"><button class="cta" type="button" data-act="impPaste">Opne</button>${navigator.clipboard?.readText?'<button class="sec" type="button" data-act="impClip">Lim inn</button>':''}${closeBtn}</div>`);
+}
+function tryPaste(txt){const c=shareCode(txt);if(c)offerImport(c);else dialog(`<h2>Fann inga delingslenke</h2><p class="note">Lenka skal innehalde «#oppsett=».</p><div class="btns"><button class="cta" type="button" data-act="paste">Prøv igjen</button>${closeBtn}</div>`)}
+// Endra i ei anna fane eller i nettlesaren (Android deler lagring med appen): les inn på nytt.
+function syncFromStorage(){
+ const c=ls.get('cfg',null);if(!c||JSON.stringify(c)===JSON.stringify(cfg))return;
+ cfg=c;pts=ls.get('pts',{});if(view==='setup')renderSetup();else go('trip');
 }
 
 // ---------- hendingar ----------
@@ -585,9 +607,14 @@ document.addEventListener('click',async e=>{
   case'ntog':{const s=near[+b.dataset.i];if(!s||!p)break;const i=p.stops.findIndex(x=>x.id===s.id);
    if(i>=0)p.stops.splice(i,1);else addStop(pid,s);save();const on=i<0;b.setAttribute('aria-pressed',on);b.querySelector('.mk').textContent=on?'✓':'+'}break;
   case'ndone':$('#dlg').innerHTML='';renderSetup();break;
-  case'share':try{await navigator.clipboard.writeText(shareLink());b.textContent='Kopiert ✓'}catch(x){dialog(`<h2>Kopier lenka</h2><input readonly value="${esc(shareLink())}" onfocus="this.select()"><div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div>`)}break;
+  case'share':if(navigator.share){try{await navigator.share({title:'Neste',text:'Oppsettet mitt i Neste. Opne lenka, eller lim ho inn under Oppsett → «Opne delingslenke».',url:shareLink()})}catch(x){}break}
+   try{await navigator.clipboard.writeText(shareLink());b.textContent='Kopiert ✓'}catch(x){dialog(`<h2>Kopier lenka</h2><input readonly value="${esc(shareLink())}" onfocus="this.select()"><div class="btns"><button class="sec" type="button" data-act="impNo">Lukk</button></div>`)}break;
   case'reset':dialog('<h2>Nullstille alt?</h2><p class="note">Alle stader, reiser og punkta for stadene blir sletta frå denne eininga.</p><div class="btns"><button class="cta" type="button" data-act="resetYes">Nullstill</button><button class="sec" type="button" data-act="impNo">Avbryt</button></div>');break;
   case'resetYes':cfg={places:[{id:uid(),name:'Heim',stops:[]}],trips:[]};pts={};savePts();save();$('#dlg').innerHTML='';renderSetup();break;
+  case'paste':pasteDialog();$('#impTxt').focus();break;
+  case'impPaste':tryPaste($('#impTxt').value);break;
+  case'impClip':try{tryPaste(await navigator.clipboard.readText())}catch(x){$('#impTxt').focus()}break;
+  case'copyLink':try{await navigator.clipboard.writeText(window._link);b.textContent='Kopiert ✓'}catch(x){dialog(`<h2>Kopier lenka</h2><input readonly value="${esc(window._link)}" onfocus="this.select()"><div class="btns">${closeBtn}</div>`)}break;
   case'impYes':cfg=window._imp;save();$('#dlg').innerHTML='';cur=null;go('trip');break;
   case'impNo':$('#dlg').innerHTML='';break;
   case'mapClose':stopFollow();$('#map').classList.remove('on');if(view==='setup')renderSetup();break;
@@ -615,7 +642,8 @@ document.addEventListener('input',e=>{if(e.target.dataset.act==='search'){clearT
 $('#mapPlace').addEventListener('change',drawPt);
 $('#setup').addEventListener('click',()=>go(view==='trip'?'setup':'trip'));
 $('#status').addEventListener('click',load);
-document.addEventListener('visibilitychange',()=>{if(document.hidden){hiddenAt=Date.now();return}if(!at||Date.now()-at>20000)load();if(follow)track();if(Date.now()-hiddenAt>120000)autoSide()});
+window.addEventListener('storage',e=>{if(e.key==='neste.cfg')syncFromStorage()});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){hiddenAt=Date.now();return}syncFromStorage();if(!at||Date.now()-at>20000)load();if(follow)track();if(Date.now()-hiddenAt>120000)autoSide()});
 setInterval(()=>{if(!document.hidden)load()},30000);
 setInterval(()=>{if(!document.hidden&&view==='trip'&&data)render()},10000);
 window.addEventListener('hashchange',checkImport); // delingslenke opna i ei fane som alt viser appen
